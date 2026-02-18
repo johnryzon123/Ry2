@@ -1,6 +1,6 @@
-# Ry (Ry's for You) 🌀
+# Ry (Ry's for You) v0.2
 
-Ry is a lightweight, robust, and user-centric programming language designed with a focus on stability and developer experience. Whether you're building simple scripts or exploring language design, Ry is built to be helpful, colorful, and fast.
+Ry is a lightweight, robust, and english-like language designed with a focus on stability and developer experience. Whether you're building simple scripts or exploring language design, Ry is built to be helpful, colorful, and fast.
 
 ## Key Features
 
@@ -8,16 +8,16 @@ Ry is a lightweight, robust, and user-centric programming language designed with
 - **Optimized Iteration**: High-level `foreach` loops and `range` expressions (`0 to 100`) designed for performance.
 - **Smart REPL**: A dynamic interactive shell with auto-indentation tracking and colorized prompts.
 - **Built for Stability**: A memory-conscious C++ core that respects your hardware limits.
+- **Improved version of Ry**: An optimized core interpreter using bytecode
 
 ## Performance
 
-Ry is built to be efficient. In our internal benchmarks, Ry's native iteration outperforms standard loop structures:
-
-| Loop Type   | Time (Lower is Better) |
-| :---------- | :--------------------- |
-| **foreach** | ~5.0s                  |
-| **for**     | ~10.0s                 |
-| **while**   | ~11.0s                 |
+Ry is built to be efficient. With an optimized custom c++ core that uses custom bytecode without external tools like
+flex, bison, antlr or llvm
+Ry also has a builtin keyword for looping through ranges ``foreach``: takes about 1 second in my laptop to run try to see it by running:
+   ```bash
+   $ ry run examples/speed_test.ry
+   ```
 
 ## Installation
 
@@ -25,7 +25,7 @@ Ry comes with a built-in installer for Linux and Windows systems.
 
 1. **Clone the repository:**
    ```bash
-   git clone [https://github.com/johnryzon123/Rylang.git](https://github.com/johnryzon123/Rylang.git)
+   git clone [https://github.com/johnryzon123/RyByteInterpreter.git](https://github.com/johnryzon123/RyByteInterpreter.git)
    cd Ry
    ```
 2. **Build and Install:**
@@ -44,7 +44,7 @@ Simply type `ry` to enter the interactive shell.
   ```bash
   $ ry
   Ry (Ry's for you) REPL
-  >> out(0 to 10)
+  ry> out(0 to 10)
   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
   ```
 
@@ -62,7 +62,7 @@ foreach data i in 0 to 100 {
 
 # Error reporting example
 {
-    out("Hello World")
+    print("Hello World") # Ry uses out() instead of print()
     # Missing brackets or typos will be caught with helpful red pointers!
 }
 ```
