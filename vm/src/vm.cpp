@@ -39,7 +39,7 @@ namespace RyRuntime {
 		va_end(args);
 
 		if (frameCount > 0) {
-			size_t instruction = frames[frameCount - 1].ip - frames[frameCount - 1].function->chunk.code.data() - 1;
+			int instruction = frames[frameCount - 1].ip - frames[frameCount - 1].function->chunk.code.data() - 1;
 			int line = frames[frameCount - 1].function->chunk.lines[instruction];
 			RyTools::report(line, 1, "", buffer, vmSource);
 		} else {
@@ -297,6 +297,7 @@ namespace RyRuntime {
 					RyValue collectionValue = peek(1);
 
 					int index = (int) indexValue.asNumber();
+
 
 					if (collectionValue.isRange()) {
 						RyRange range = collectionValue.asRange();

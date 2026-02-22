@@ -20,11 +20,11 @@ namespace Backend {
 		std::vector<Token> tokens;
 
 		// Position
-		std::size_t start = 0;
-		std::size_t current = 0;
-		std::size_t line = 1;
-		std::size_t column = 1;
-		std::size_t tokenStartColumn = 1;
+		int start = 0;
+		int current = 0;
+		int line = 1;
+		int column = 1;
+		int tokenStartColumn = 1;
 
 		// functions:
 		//  function: char

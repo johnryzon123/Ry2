@@ -423,20 +423,23 @@ namespace RyRuntime {
 	void Compiler::visitAliasStmt(AliasStmt &stmt) {}
 	void Compiler::visitNamespaceStmt(NamespaceStmt &stmt) {}
 	void Compiler::visitEachStmt(EachStmt &stmt) {
+		// Push Collection
 		compileExpression(stmt.collection);
+		// Push initial Index
 		emitConstant(RyValue(0.0));
 
-		// It need's two fake locals so the compiler knows
-		// slots 1 and 2 are occupied by the list and the index.
-		Token dummyToken = {TokenType::IDENTIFIER, "", nullptr, 0, 0};
-		addLocal(dummyToken); // Occupies the List slot
-		addLocal(dummyToken); // Occupies the Index slot
+		Token dummyToken = {TokenType::Nothing_Here, "", nullptr, 0, 0};
+		addLocal(dummyToken); // Represents the Collection slot
+		addLocal(dummyToken); // Represents the Index slot
+		addLocal(dummyToken); // Represents the data
 
 		int loopStart = compilingChunk->code.size();
 		int exitJump = emitJump(OP_FOR_EACH_NEXT);
 
+		// Now, when it adds the loop variable, it will be at the
+		// stack top where OP_FOR_EACH_NEXT just pushed 'current'!
 		beginScope();
-		addLocal(stmt.id); // This will now correctly point to Slot 3!
+		addLocal(stmt.id);
 
 		compileStatement(stmt.body);
 		endScope();

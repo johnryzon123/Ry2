@@ -106,7 +106,7 @@ struct RyValue {
 		if (isList()) {
 			std::string result = "[";
 			auto list = asList();
-			for (size_t i = 0; i < list->size(); i++) {
+			for (int i = 0; i < list->size(); i++) {
 				result += (*list)[i].to_string();
 				if (i < list->size() - 1)
 					result += ", ";

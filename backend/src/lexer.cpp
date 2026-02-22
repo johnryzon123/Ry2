@@ -211,7 +211,7 @@ void Lexer::str() {
 			next();
 
 			// Collect the variable name
-			size_t varStart = current;
+			int varStart = current;
 			while (peek() != '}' && !isAtEnd()) {
 				next();
 			}

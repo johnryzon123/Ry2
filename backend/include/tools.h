@@ -67,7 +67,7 @@ namespace RyTools {
 		int balance = 0;
 		bool inString = false;
 
-		for (size_t i = 0; i < line.length(); ++i) {
+		for (int i = 0; i < line.length(); ++i) {
 			char c = line[i];
 
 			// If we hit a comment, ignore the rest of the line

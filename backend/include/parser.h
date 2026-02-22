@@ -25,7 +25,7 @@ namespace Backend {
 		std::vector<Token> tokens;
 
 		// Position
-		std::size_t current = 0;
+		int current = 0;
 		std::set<std::string> typeAliases;
 		Token peek();
 		Token next();

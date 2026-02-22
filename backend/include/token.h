@@ -92,8 +92,8 @@ namespace Backend {
 		TokenType type;
 		std::string lexeme;
 		RyValue literal;
-		size_t line;
-		size_t column;
+		int line;
+		int column;
 		Token(TokenType t, std::string lex, RyValue lit, int l, int c) :
 				type(t), lexeme(std::move(lex)), literal(std::move(lit)), line(l), column(c) {}
 	};
