@@ -43,7 +43,7 @@ Simply type `ry` to enter the interactive shell.
 
   ```bash
   $ ry
-  Ry (Ry's for you) REPL
+  Ry (Ry's for you) REPL - Bytecode Edition
   ry> out(0 to 10)
   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
   ```
@@ -63,8 +63,7 @@ foreach data i in 0 to 100 {
 # Error reporting example
 {
     print("Hello World") # Ry uses out() instead of print()
-    # Missing brackets or typos will be caught with helpful red pointers!
-}
+# Missing brackets or typos will be caught with helpful red pointers!
 ```
 
 # License
