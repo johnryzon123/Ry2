@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <stdarg.h>
 #include "chunk.h"
+#include "common.h"
 #include "func.h"
 #include "native.hpp"
 #include "tools.h"
@@ -59,6 +60,17 @@ namespace RyRuntime {
 		frame->slots = stack;
 
 		return run();
+	}
+	bool VM::isTruthy(RyValue value) {
+		if (value.isNumber()) {
+			return value.asNumber() != 0;
+		} else if (value.isBool()) {
+			return value.asBool();
+		} else if (value.isNil()) {
+			return false;
+		} else {
+			return true;
+		}
 	}
 	RyValue VM::peek(int distance) {
 		// stackTop points to the NEXT empty slot,
@@ -188,7 +200,7 @@ namespace RyRuntime {
 				}
 				case OP_JUMP_IF_FALSE: {
 					uint16_t offset = READ_SHORT();
-					if (!(*(stackTop - 1)).asBool()) {
+					if (!isTruthy(peek(0))) {
 						FRAME.ip += offset;
 					}
 					break;
@@ -332,7 +344,7 @@ namespace RyRuntime {
 				case OP_BUILD_RANGE_LIST: {
 					double end = pop().asNumber();
 					double start = pop().asNumber();
-					push(RyValue(RyRange{start, end})); // Instant! No vector allocation.
+					push(RyValue(RyRange{start, end}));
 					break;
 				}
 
@@ -365,7 +377,132 @@ namespace RyRuntime {
 						panicStack.pop_back();
 					} else {
 						runtimeError("Cannot end attempt if panicStack is empty.");
+						return INTERPRET_RUNTIME_ERROR;
 					}
+					break;
+				}
+				case OP_GET_INDEX: {
+					RyValue index = pop();
+					RyValue object = pop();
+
+					if (object.isList()) {
+						auto list = object.asList();
+						// Ensure the index is a number
+						if (!index.isNumber()) {
+							runtimeError("List index must be a number.");
+							return INTERPRET_RUNTIME_ERROR;
+						}
+						int i = (int) index.asNumber();
+						if (i >= 0 && i < list->size()) {
+							push((*list)[i]);
+						} else {
+							runtimeError("List index out of bounds.");
+							return INTERPRET_RUNTIME_ERROR;
+						}
+					} else {
+						runtimeError("Only lists can be indexed currently.");
+						return INTERPRET_RUNTIME_ERROR;
+					}
+					break;
+				}
+				case OP_SET_INDEX: {
+					RyValue value = pop();
+					RyValue index = pop();
+					RyValue object = pop();
+
+					if (object.isList()) {
+						auto list = object.asList();
+						// Ensure the index is a number
+						if (!index.isNumber()) {
+							runtimeError("List index must be a number.");
+							return INTERPRET_RUNTIME_ERROR;
+						}
+						(*list)[(int) index.asNumber()] = value;
+						push(value);
+					} else {
+						runtimeError("Only lists can be indexed currently.");
+						return INTERPRET_RUNTIME_ERROR;
+					}
+					break;
+				}
+
+				case OP_BITWISE_AND: {
+					RyValue b = pop();
+					RyValue a = pop();
+
+					// Ensure that they are numbers to avoid crashing
+					if (!a.isNumber() || !b.isNumber()) {
+						runtimeError("Operands must be numbers for bitwise operations.");
+						return INTERPRET_RUNTIME_ERROR;
+					}
+
+					// Cast to integers for the C++ bitwise & operator
+					long result = (long) a.asNumber() & (long) b.asNumber();
+					push(RyValue((double) result));
+					break;
+				}
+				case OP_BITWISE_OR: {
+					RyValue b = pop();
+					RyValue a = pop();
+
+					// Ensure that they are numbers to avoid crashing
+					if (!a.isNumber() || !b.isNumber()) {
+						runtimeError("Operands must be numbers for bitwise operations.");
+						return INTERPRET_RUNTIME_ERROR;
+					}
+
+					// Cast to integers for the C++ bitwise | operator
+					long result = (long) a.asNumber() | (long) b.asNumber();
+					push(RyValue((double) result));
+					break;
+				}
+				case OP_BITWISE_XOR: {
+					RyValue b = pop();
+					RyValue a = pop();
+
+					// Ensure that they are numbers to avoid crashing
+					if (!a.isNumber() || !b.isNumber()) {
+						runtimeError("Operands must be numbers for bitwise operations.");
+						return INTERPRET_RUNTIME_ERROR;
+					}
+
+					// Cast to integers for the C++ bitwise ^ operator
+					long result = (long) a.asNumber() ^ (long) b.asNumber();
+					push(RyValue((double) result));
+					break;
+				}
+				case OP_LEFT_SHIFT: {
+					RyValue b = pop();
+					RyValue a = pop();
+
+					// Ensure that they are numbers to avoid crashing
+					if (!a.isNumber() || !b.isNumber()) {
+						runtimeError("Operands must be numbers for bitwise operations.");
+						return INTERPRET_RUNTIME_ERROR;
+					}
+
+					// Cast to integers for the C++ bitwise << operator
+					long result = (long) a.asNumber() << (long) b.asNumber();
+					push(RyValue((double) result));
+					break;
+				}
+				case OP_RIGHT_SHIFT: {
+					RyValue b = pop();
+					RyValue a = pop();
+
+					// Ensure that they are numbers to avoid crashing
+					if (!a.isNumber() || !b.isNumber()) {
+						runtimeError("Operands must be numbers for bitwise operations.");
+						return INTERPRET_RUNTIME_ERROR;
+					}
+
+					// Cast to integers for the C++ bitwise >> operator
+					long result = (long) a.asNumber() >> (long) b.asNumber();
+					push(RyValue((double) result));
+					break;
+				}
+				case OP_COPY: {
+					push(peek(0));
 					break;
 				}
 				default:

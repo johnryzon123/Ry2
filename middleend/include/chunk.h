@@ -9,9 +9,9 @@ namespace RyRuntime {
 	enum OpCode {
 		// Literals
 		OP_CONSTANT,
-		OP_NULL,
-		OP_TRUE,
-		OP_FALSE,
+		OP_NULL, // null
+		OP_TRUE, // true
+		OP_FALSE, // false
 		OP_POP,
 
 		// Variables & Scopes
@@ -24,43 +24,51 @@ namespace RyRuntime {
 		OP_SET_PROPERTY,
 
 		// Math
-		OP_ADD,
-		OP_SUBTRACT,
-		OP_MULTIPLY,
-		OP_DIVIDE,
-		OP_MODULO,
-		OP_NEGATE,
-		OP_GROUPING,
-		OP_CLOSE_GROUPING,
-		OP_BUILD_RANGE_LIST,
-		OP_BUILD_LIST,
+		OP_ADD, // +
+		OP_SUBTRACT, // -
+		OP_MULTIPLY, // *
+		OP_DIVIDE, // /
+		OP_MODULO, // %
+		OP_NEGATE, // -
+		OP_GROUPING, // {
+		OP_CLOSE_GROUPING, // }
+		OP_BUILD_RANGE_LIST, // 0 to 10
+		OP_BUILD_LIST, // [0,0,0,0]
+		OP_GET_INDEX, // data i = [0,0,0]
+		OP_SET_INDEX, // i[0] = 100
+		OP_BITWISE_OR, // |
+		OP_BITWISE_XOR, // ^
+		OP_BITWISE_AND, // &
+		OP_LEFT_SHIFT, // <<
+		OP_RIGHT_SHIFT, // >>
+		OP_COPY,
 
 
 
 		// Comparison
-		OP_EQUAL,
-		OP_GREATER,
-		OP_LESS,
-		OP_NOT,
+		OP_EQUAL, // ==
+		OP_GREATER, // >
+		OP_LESS, // <
+		OP_NOT, // not
 
 		// Control Flow
-		OP_JUMP, // Forwards (if/else)
+		OP_JUMP, // if/else
 		OP_JUMP_IF_FALSE,
-		OP_LOOP, // Backwards (while/for/until)
+		OP_LOOP, // while/for/until
 		OP_FOR_EACH_NEXT,
 
 		// Ry Specifics
-		OP_CALL,
-		OP_CLASS,
-		OP_INHERIT,
-		OP_PANIC,
-		OP_RETURN,
-		OP_FUNCTION,
-		OP_ATTEMPT,
+		OP_CALL, // test()
+		OP_CLASS, // class
+		OP_INHERIT, // childof
+		OP_PANIC, // panic
+		OP_RETURN, // return
+		OP_FUNCTION, // func test() {}
+		OP_ATTEMPT, // attempt {} fail err {}
 		OP_END_ATTEMPT,
 	};
 
-	// The Chunk: A sequence of bytecode
+	// The sequence of bytecode
 	struct Chunk {
 		std::vector<uint8_t> code; // The Instructions
 		std::vector<RyValue> constants; // For numbers/strings

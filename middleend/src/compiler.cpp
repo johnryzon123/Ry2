@@ -403,20 +403,92 @@ namespace RyRuntime {
 		// Switch back to Main
 		compilingChunk = mainChunk;
 
-		// 1. Push the function as a constant
+		// Push the function as a constant
 		emitConstant(RyValue(function));
 
-		// 2. Define it as a global with a NAME OPERAND
+		// Define it as a global with a NAME OPERAND
 		emitBytes(OP_DEFINE_GLOBAL, (uint8_t) makeConstant(RyValue(stmt.name.lexeme)));
 	}
 	void Compiler::visitMap(MapExpr &expr) {}
-	void Compiler::visitIndexSet(IndexSetExpr &expr) {}
-	void Compiler::visitIndex(IndexExpr &expr) {}
-	void Compiler::visitBitwiseOr(BitwiseOrExpr &expr) {}
-	void Compiler::visitBitwiseXor(BitwiseXorExpr &expr) {}
-	void Compiler::visitBitwiseAnd(BitwiseAndExpr &expr) {}
-	void Compiler::visitPostfix(PostfixExpr &expr) {}
-	void Compiler::visitShift(ShiftExpr &expr) {}
+	void Compiler::visitIndexSet(IndexSetExpr &expr) {
+		compileExpression(expr.object);
+		compileExpression(expr.index);
+		compileExpression(expr.value);
+		emitByte(OP_SET_INDEX);
+	}
+	void Compiler::visitIndex(IndexExpr &expr) {
+		compileExpression(expr.object);
+		compileExpression(expr.index);
+		emitByte(OP_GET_INDEX);
+	}
+	void Compiler::visitBitwiseOr(BitwiseOrExpr &expr) {
+		compileExpression(expr.left);
+		compileExpression(expr.right);
+		emitByte(OP_BITWISE_OR);
+	}
+	void Compiler::visitBitwiseXor(BitwiseXorExpr &expr) {
+		compileExpression(expr.left);
+		compileExpression(expr.right);
+		emitByte(OP_BITWISE_XOR);
+	}
+	void Compiler::visitBitwiseAnd(BitwiseAndExpr &expr) {
+		compileExpression(expr.left);
+		compileExpression(expr.right);
+		emitByte(OP_BITWISE_AND);
+	}
+	void Compiler::visitPostfix(PostfixExpr &expr) {
+		currentColumn = expr.postfix.column;
+		currentLine = expr.postfix.line;
+
+		// Try to see if the left side is a variable
+		// Cast the 'left' Expr to a VariableExpr to get the name
+		auto var = std::dynamic_pointer_cast<VariableExpr>(expr.left);
+
+		if (var) {
+			// Get the current value onto the stack
+			int arg = resolveLocal(var->name);
+			if (arg != -1) {
+				emitBytes(OP_GET_LOCAL, (uint8_t) arg);
+			} else {
+				emitBytes(OP_GET_GLOBAL, (uint8_t) makeConstant(RyValue(var->name.lexeme)));
+			}
+
+			// Copy the value
+			emitByte(OP_COPY);
+
+			// Push the increment value
+			emitConstant(RyValue(1.0));
+
+			// Add or Subtract
+			if (expr.postfix.type == TokenType::PLUS_PLUS) {
+				emitByte(OP_ADD);
+			} else {
+				emitByte(OP_SUBTRACT);
+			}
+
+			// Store the NEW value back into the variable
+			if (arg != -1) {
+				emitBytes(OP_SET_LOCAL, (uint8_t) arg);
+			} else {
+				emitBytes(OP_SET_GLOBAL, (uint8_t) makeConstant(RyValue(var->name.lexeme)));
+			}
+
+			// Pop the result of the SET (leaving only the original copy)
+			emitByte(OP_POP);
+
+		} else {
+			
+		}
+	}
+	void Compiler::visitShift(ShiftExpr &expr) {
+		compileExpression(expr.left);
+		compileExpression(expr.right);
+		if (expr.op_t.type == TokenType::LESS_LESS) {
+			emitByte(OP_LEFT_SHIFT);
+		} else {
+			emitByte(OP_RIGHT_SHIFT);
+		}
+	}
 	void Compiler::visitStopStmt(StopStmt &stmt) {}
 	void Compiler::visitSkipStmt(SkipStmt &stmt) {}
 	void Compiler::visitImportStmt(ImportStmt &stmt) {}
@@ -447,11 +519,12 @@ namespace RyRuntime {
 		emitLoop(loopStart);
 		patchJump(exitJump);
 
-		// Pop the 3 things it pushed (Item, Index, Collection)
+		// Pop the 4 things it pushed (Item, Index, Collection, Data)
 		emitBytes(OP_POP, OP_POP);
-		emitByte(OP_POP);
+		emitBytes(OP_POP, OP_POP);
 
-		// Remove our two phantom locals from the compiler's tracking
+		// Remove the 3 phantom locals from the compiler's tracking
+		locals.pop_back();
 		locals.pop_back();
 		locals.pop_back();
 	}
@@ -483,7 +556,7 @@ namespace RyRuntime {
 
 		endScope(); // Pops the error variable
 
-		// 7. Patch the skipFail jump so the 'attempt' block finishes here
+		// Patch the skipFail jump so the 'attempt' block finishes here
 		patchJump(skipFail);
 	}
 } // namespace RyRuntime

@@ -26,6 +26,7 @@ namespace RyRuntime {
 	// Possible exit states for the VM
 	enum InterpretResult { INTERPRET_OK, INTERPRET_COMPILE_ERROR, INTERPRET_RUNTIME_ERROR };
 
+
 	// The main virtual machine class
 	class VM {
 	public:
@@ -65,5 +66,6 @@ namespace RyRuntime {
 
 		// Runtime helpers
 		void runtimeError(const char *format, ...); // Calls report() for advance error reporting
+		bool isTruthy(RyValue value);
 	};
 } // namespace RyRuntime
