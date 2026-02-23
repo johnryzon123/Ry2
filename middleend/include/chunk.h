@@ -1,7 +1,7 @@
 #ifndef ry_chunk_h
 #define ry_chunk_h
 
-#include "common.h"
+#include "value.h"
 
 namespace RyRuntime {
 

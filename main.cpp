@@ -5,11 +5,11 @@
 #include "chunk.h"
 #include "colors.h"
 #include "compiler.h"
+#include "func.h"
 #include "lexer.h"
 #include "parser.h"
 #include "tools.h"
 #include "vm.h"
-#include "func.h"
 
 
 using namespace RyRuntime;
@@ -76,6 +76,16 @@ void runREPL(VM &vm) {
 			indentLevel = 0;
 			continue;
 		}
+		if (line == "!!") { // A manual 'abort' command
+			buffer.clear();
+			indentLevel = 0;
+			std::cout << "Buffer cleared.\n";
+			continue;
+		}
+
+		if (line.empty() && buffer.empty()) {
+			continue;
+		}
 
 		int change = RyTools::countIndentation(line);
 		indentLevel += change;
@@ -83,7 +93,11 @@ void runREPL(VM &vm) {
 
 		if (indentLevel <= 0 && !buffer.empty() && buffer != "\n") {
 			interpret(vm, buffer);
+			// FORCE RESET here to ensure the prompt comes back
 			buffer.clear();
+			indentLevel = 0;
+		} else if (indentLevel < 0) {
+			// Safety check: don't allow negative indentation to break the prompt
 			indentLevel = 0;
 		}
 	}

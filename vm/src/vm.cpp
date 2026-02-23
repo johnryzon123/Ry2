@@ -39,12 +39,21 @@ namespace RyRuntime {
 		vsnprintf(buffer, sizeof(buffer), format, args);
 		va_end(args);
 
+		// Sanity check: Ensure we actually have a frame to report from
 		if (frameCount > 0) {
-			int instruction = frames[frameCount - 1].ip - frames[frameCount - 1].function->chunk.code.data() - 1;
-			int line = frames[frameCount - 1].function->chunk.lines[instruction];
-			RyTools::report(line, 1, "", buffer, vmSource);
+			auto &frame = frames[frameCount - 1];
+
+			// Safety check: Ensure IP is within the code bounds
+			size_t instruction = frame.ip - frame.function->chunk.code.data() - 1;
+
+			if (instruction < frame.function->chunk.lines.size()) {
+				int line = frame.function->chunk.lines[instruction];
+				RyTools::report(line, 1, "", buffer, vmSource);
+			} else {
+				std::cerr << RyColor::RED << "Runtime Error: " << RyColor::RESET << buffer << "\n";
+			}
 		} else {
-			std::cerr << buffer << "\n";
+			std::cerr << RyColor::RED << "Runtime Error: " << RyColor::RESET << buffer << "\n";
 		}
 
 		resetStack();
@@ -238,16 +247,20 @@ namespace RyRuntime {
 				case OP_PANIC: {
 				trigger_panic:
 					RyValue message = pop();
+
 					if (panicStack.empty()) {
-						runtimeError("Unhandled Panic: %s", message.to_string().c_str());
+						std::string output = message.isNil() ? "" : message.to_string();
+						std::cerr << output << "\n";
+						resetStack();
 						return INTERPRET_RUNTIME_ERROR;
 					}
 
+					// Found an 'attempt' block! (The 'catch' equivalent)
 					ControlBlock block = panicStack.back();
 					panicStack.pop_back();
 
 					stackTop = stack + block.stackDepth;
-					push(message);
+					push(message); // Pass the 'exception' object to the handler
 
 					FRAME.ip = FRAME.function->chunk.code.data() + block.handlerIP;
 					break;
@@ -255,7 +268,6 @@ namespace RyRuntime {
 				case OP_CALL: {
 					uint8_t argCount = READ_BYTE();
 					RyValue callee = *(stackTop - 1 - argCount);
-					std::cout << "Debug: Callee Type Index is " << callee.val.index() << std::endl;
 
 					if (callee.isNative()) {
 						// Get the shared pointer to the RyNative object

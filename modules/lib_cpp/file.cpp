@@ -1,7 +1,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
-#include "common.h"
+#include "value.h"
 
 typedef RyValue (*RawNativeFn)(std::vector<RyValue>);
 typedef void (*RegisterFn)(const char *, RawNativeFn, void *);

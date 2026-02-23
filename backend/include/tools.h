@@ -10,6 +10,7 @@
 #include <vector>
 #include "colors.h"
 #include "token.h"
+#include "value.h"
 
 namespace fs = std::filesystem;
 
