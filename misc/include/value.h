@@ -86,5 +86,4 @@ struct RyValue {
 	RyValue operator<(const RyValue &other) const;
 	RyValue operator>=(const RyValue &other) const;
 };
-
-typedef RyValue (*NativeFn)(int argCount, RyValue *args);
+typedef RyValue (*NativeFn)(int argCount, RyValue* args, std::unordered_map<std::string, RyValue>& globals);

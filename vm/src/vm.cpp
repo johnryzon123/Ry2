@@ -274,7 +274,7 @@ namespace RyRuntime {
 						auto nativeObj = callee.asNative();
 
 						// Call the 'function' member stored inside that object
-						RyValue result = nativeObj->function(argCount, stackTop - argCount);
+						RyValue result = nativeObj->function(argCount, stackTop - argCount, globals);
 
 						// Clean up: remove args and the function object itself
 						stackTop -= argCount + 1;
@@ -423,6 +423,26 @@ namespace RyRuntime {
 						}
 					} else {
 						runtimeError("Can only index lists and maps.");
+						return INTERPRET_RUNTIME_ERROR;
+					}
+					break;
+				}
+				case OP_GET_PROPERTY: {
+					RyValue name = READ_CONSTANT();
+					RyValue object = pop();
+
+					if (object.isMap()) {
+						auto ryMap = object.asMap();
+						auto it = ryMap->find(name);
+
+						if (it != ryMap->end()) {
+							push(it->second);
+						} else {
+							runtimeError("Property '%s' not found.", name.to_string().c_str());
+							return INTERPRET_RUNTIME_ERROR;
+						}
+					} else {
+						runtimeError("Only maps and classes have properties.");
 						return INTERPRET_RUNTIME_ERROR;
 					}
 					break;

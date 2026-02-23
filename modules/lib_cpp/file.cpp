@@ -1,38 +1,36 @@
 #include <fstream>
 #include <string>
-#include <vector>
+#include <unordered_map>
 #include "value.h"
 
-typedef RyValue (*RawNativeFn)(std::vector<RyValue>);
-typedef void (*RegisterFn)(const char *, RawNativeFn, void *);
+typedef RyValue (*RawNativeFn)(int, RyValue*, std::unordered_map<std::string, RyValue>&);
+typedef void (*RegisterFn)(const char*, RawNativeFn, int, void*);
 
-RyValue file_read_raw(std::vector<RyValue> args) {
-  // Guard against empty args to prevent Segfaults
-  if (args.empty() || !args[0].isString()) return RyValue();
+// Native function: Read File
+RyValue file_read_raw(int argCount, RyValue* args, std::unordered_map<std::string, RyValue>& globals) {
+    if (argCount < 1 || !args[0].isString()) return RyValue();
 
-  std::string path = args[0].asString();
-  std::ifstream file(path);
-  
-  if (!file.is_open()) return RyValue(); // Return nil if file missing
+    std::ifstream file(args[0].to_string());
+    if (!file.is_open()) return RyValue();
 
-  std::string content((std::istreambuf_iterator<char>(file)),
-                       std::istreambuf_iterator<char>());
-  return RyValue(content);
+    std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    return RyValue(content);
 }
 
-RyValue file_write_raw(std::vector<RyValue> args) {
-  // Expecting: write_raw(path, content)
-  if (args.size() < 2 || !args[0].isString() || !args[1].isString()) 
-    return RyValue(false);
+// Native function: Write File
+RyValue file_write_raw(int argCount, RyValue* args, std::unordered_map<std::string, RyValue>& globals) {
+    if (argCount < 2 || !args[0].isString() || !args[1].isString()) return RyValue(false);
 
-  std::ofstream file(args[0].asString());
-  if (!file.is_open()) return RyValue(false);
+    std::ofstream file(args[0].to_string());
+    if (!file.is_open()) return RyValue(false);
 
-  file << args[1].asString();
-  return RyValue(true);
+    file << args[1].to_string();
+    return RyValue(true);
 }
 
-extern "C" void register_ry_module(RegisterFn register_fn, void *target) {
-  register_fn("read", file_read_raw, target);
-  register_fn("write", file_write_raw, target);
+// The Entry Point
+extern "C" void init_ry_module(RegisterFn register_fn, void *target) {
+    // Register "read" and "write" functions
+    register_fn("read", file_read_raw, 1, target);
+    register_fn("write", file_write_raw, 2, target);
 }

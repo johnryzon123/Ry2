@@ -4,6 +4,7 @@
 #include "native_sys.hpp"
 #include "native_list.hpp"
 #include "native_type.hpp"
+#include "native_use.hpp"
 
 namespace RyRuntime {
 	inline void registerNatives(std::unordered_map<std::string, RyValue> &globals) {
@@ -20,5 +21,6 @@ namespace RyRuntime {
 		define("len", ry_len, 1);
 		define("pop", ry_pop, 1);
 		define("type", ry_type, 1);
+		define("use", ry_use, 1);
 	}
 } // namespace RyRuntime

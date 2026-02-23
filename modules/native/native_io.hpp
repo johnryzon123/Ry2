@@ -4,7 +4,7 @@
 #include <ctime>
 #include <iostream>
 #include <string>
-#include "common.h"
+#include "value.h"
 
 
 namespace RyRuntime {
@@ -22,7 +22,7 @@ namespace RyRuntime {
 
 	// Native 'out(...args)'
 	// Takes variadic arguments and prints them with spaces in between
-	inline RyValue ry_out(int argCount, RyValue *args) {
+	inline RyValue ry_out(int argCount, RyValue *args, std::unordered_map<std::string, RyValue>& globals) {
 		for (int i = 0; i < argCount; i++) {
 			std::cout << args[i].to_string();
 			if (i < argCount - 1)
@@ -33,7 +33,7 @@ namespace RyRuntime {
 	}
 
 	// Native 'input(prompt)'
-	inline RyValue ry_input(int argCount, RyValue *args) {
+	inline RyValue ry_input(int argCount, RyValue *args, std::unordered_map<std::string, RyValue>& globals) {
 		if (argCount > 0) {
 			std::cout << args[0].to_string();
 			std::cout.flush();

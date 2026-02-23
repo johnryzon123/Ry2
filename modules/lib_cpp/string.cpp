@@ -1,72 +1,52 @@
 #include <algorithm>
 #include <string>
-#include <vector>
 #include "value.h"
 
-// Forward declarations to keep it clean
-namespace Frontend {
-	class RyCallable;
-}
+typedef RyValue (*RawNativeFn)(int, RyValue *, std::unordered_map<std::string, RyValue> &);
+typedef void (*RegisterFn)(const char *, RawNativeFn, int, void *);
 
-typedef RyValue (*RawNativeFn)(std::vector<RyValue>);
-typedef void (*RegisterFn)(const char *, RawNativeFn, void *);
-
-RyValue string_upper(std::vector<RyValue> args) {
-	if (args.empty())
+RyValue string_upper(int argCount, RyValue *args, std::unordered_map<std::string, RyValue> &globals) {
+	if (argCount < 1 || !args[0].isString())
 		return RyValue();
 
-	try {
-		if (args[0].isString()) {
-			std::string s = args[0].asString();
-			std::transform(s.begin(), s.end(), s.begin(), ::toupper);
-			return s;
-		}
-	} catch (...) {
-		// Guard against internal type errors
-	}
-	return args[0];
+	std::string s = args[0].to_string();
+	std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+	return RyValue(s);
 }
 
-RyValue string_lower(std::vector<RyValue> args) {
-	if (args.empty())
+RyValue string_lower(int argCount, RyValue *args, std::unordered_map<std::string, RyValue> &globals) {
+	if (argCount < 1 || !args[0].isString())
 		return RyValue();
 
-	try {
-		if (args[0].isString()) {
-			std::string s = args[0].asString();
-			std::transform(s.begin(), s.end(), s.begin(), ::tolower);
-			return s;
-		}
-	} catch (...) {
-	}
-	return args[0];
+	std::string s = args[0].to_string();
+	std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+	return RyValue(s);
 }
 
-RyValue string_substr(std::vector<RyValue> args) {
-	// Expecting: substr(string, start, length)
-	if (args.size() < 3)
-		return RyValue();
+RyValue string_substr(int argCount, RyValue *args, std::unordered_map<std::string, RyValue> &globals) {
+	if (argCount < 3 || !args[0].isString() || !args[1].isNumber() || !args[2].isNumber())
+		return RyValue(""); // Return empty string instead of Nil for consistency
 
-	try {
-		if (args[0].isString() && args[1].isNumber() && args[2].isNumber()) {
+	std::string s = args[0].asString();
+	int start = (int) args[1].asNumber();
+	int len = (int) args[2].asNumber();
 
-			std::string s = args[0].asString();
-			int start = static_cast<int>(args[1].asNumber());
-			int len = static_cast<int>(args[2].asNumber());
+	// Clamp start to 0 if negative, or return empty if way out of bounds
+	if (start < 0)
+		start = 0;
+	if (start >= (int) s.length())
+		return RyValue("");
 
-			// Safety: check bounds to prevent C++ crashes
-			if (start < 0 || start >= s.length())
-				return std::string("");
-
-			return s.substr(start, len);
-		}
-	} catch (...) {
+	// Ensure len doesn't go past the end of the string
+	if (start + len > (int) s.length()) {
+		len = (int) s.length() - start;
 	}
-	return RyValue();
+
+	return RyValue(s.substr(start, len));
 }
 
-extern "C" void register_ry_module(RegisterFn register_fn, void *target) {
-	register_fn("upper", string_upper, target);
-	register_fn("lower", string_lower, target);
-	register_fn("substr", string_substr, target);
+extern "C" void init_ry_module(RegisterFn register_fn, void *target) {
+	register_fn("upper", string_upper, 1, target);
+	register_fn("lower", string_lower, 1, target);
+	register_fn("substr", string_substr, 3, target);
 }
