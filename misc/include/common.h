@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -37,14 +38,20 @@ struct RyRange {
 	bool operator==(const RyRange &other) const { return start == other.start && end == other.end; }
 };
 
+struct RyValue;
+
+struct RyValueHasher {
+	size_t operator()(const RyValue &v) const;
+};
+
 struct RyValue {
 	using List = std::shared_ptr<std::vector<RyValue>>;
-	using Map = std::shared_ptr<Backend::Environment>;
+	using Map = std::shared_ptr<std::unordered_map<RyValue, RyValue, RyValueHasher>>;
 	using Func = std::shared_ptr<Frontend::RyFunction>;
 	using Instance = std::shared_ptr<Frontend::RyInstance>;
 	using Native = std::shared_ptr<Frontend::RyNative>;
 
-	using Variant = std::variant<std::monostate, double, bool, std::string, List, RyRange, Map, Func, Instance, Native>;
+	using Variant = std::variant<std::monostate, Native, Func, double, bool, std::string, List, RyRange, Map, Instance>;
 
 	Variant val;
 
@@ -114,8 +121,18 @@ struct RyValue {
 			result += "]";
 			return result;
 		}
-		if (isMap())
-			return "<map>";
+		if (isMap()) {
+			std::string result = "{";
+			auto ryMap = asMap();
+			int i = 0;
+			for (auto const &[key, val]: *ryMap) {
+				result += key.to_string() + ": " + val.to_string();
+				if (++i < ryMap->size())
+					result += ", ";
+			}
+			result += "}";
+			return result;
+		}
 		if (isFunction())
 			return "<function>";
 		if (isInstance())
@@ -182,6 +199,20 @@ struct RyValue {
 		}
 		return RyValue(std::nullptr_t{});
 	}
+};
+
+inline size_t RyValueHasher::operator()(const RyValue &v) const {
+	if (v.isNumber())
+		return std::hash<double>{}(v.asNumber());
+	if (v.isBool())
+		return std::hash<bool>{}(v.asBool());
+	if (v.isString())
+		return std::hash<std::string>{}(v.to_string());
+	if (v.isList())
+		return std::hash<RyValue::List>{}(v.asList());
+	if (v.isMap())
+		return std::hash<RyValue::Map>{}(v.asMap());
+	return 0;
 };
 
 typedef RyValue (*NativeFn)(int argCount, RyValue *args);

@@ -42,6 +42,7 @@ namespace RyRuntime {
 		OP_LEFT_SHIFT, // <<
 		OP_RIGHT_SHIFT, // >>
 		OP_COPY,
+		OP_BUILD_MAP,
 
 
 

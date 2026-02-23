@@ -409,7 +409,20 @@ namespace RyRuntime {
 		// Define it as a global with a NAME OPERAND
 		emitBytes(OP_DEFINE_GLOBAL, (uint8_t) makeConstant(RyValue(stmt.name.lexeme)));
 	}
-	void Compiler::visitMap(MapExpr &expr) {}
+	void Compiler::visitMap(MapExpr &expr) {
+		currentColumn = expr.braceToken.column;
+		currentLine = expr.braceToken.line;
+
+		for (const auto &item: expr.items) {
+			// Compile the Key
+			compileExpression(item.first);
+			// Compile the Value
+			compileExpression(item.second);
+		}
+
+		// Emit the instruction with the number of pairs to collect
+		emitBytes(OP_BUILD_MAP, (uint8_t) expr.items.size());
+	}
 	void Compiler::visitIndexSet(IndexSetExpr &expr) {
 		compileExpression(expr.object);
 		compileExpression(expr.index);
@@ -477,7 +490,6 @@ namespace RyRuntime {
 			emitByte(OP_POP);
 
 		} else {
-			
 		}
 	}
 	void Compiler::visitShift(ShiftExpr &expr) {

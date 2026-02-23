@@ -255,6 +255,7 @@ namespace RyRuntime {
 				case OP_CALL: {
 					uint8_t argCount = READ_BYTE();
 					RyValue callee = *(stackTop - 1 - argCount);
+					std::cout << "Debug: Callee Type Index is " << callee.val.index() << std::endl;
 
 					if (callee.isNative()) {
 						// Get the shared pointer to the RyNative object
@@ -399,8 +400,17 @@ namespace RyRuntime {
 							runtimeError("List index out of bounds.");
 							return INTERPRET_RUNTIME_ERROR;
 						}
+					} else if (object.isMap()) {
+						auto ryMap = object.asMap();
+
+						if (ryMap->find(index) != ryMap->end()) {
+							push((*ryMap)[index]);
+						} else {
+							runtimeError("Key '%s' not found in map.", index.to_string().c_str());
+							return INTERPRET_RUNTIME_ERROR;
+						}
 					} else {
-						runtimeError("Only lists can be indexed currently.");
+						runtimeError("Can only index lists and maps.");
 						return INTERPRET_RUNTIME_ERROR;
 					}
 					break;
@@ -503,6 +513,19 @@ namespace RyRuntime {
 				}
 				case OP_COPY: {
 					push(peek(0));
+					break;
+				}
+				case OP_BUILD_MAP: {
+					uint8_t count = READ_BYTE();
+					auto mapPtr = std::make_shared<std::unordered_map<RyValue, RyValue, RyValueHasher>>();
+
+					for (int i = 0; i < count; i++) {
+						RyValue value = pop();
+						RyValue key = pop();
+						(*mapPtr)[key] = value;
+					}
+
+					push(RyValue(mapPtr));
 					break;
 				}
 				default:
