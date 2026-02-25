@@ -1,10 +1,15 @@
 #include "vm.h"
 #include <cstdio>
+#include <fstream>
+#include <set>
 #include <stdarg.h>
 #include "chunk.h"
 #include "common.h"
+#include "compiler.h"
 #include "func.h"
+#include "lexer.h"
 #include "native.hpp"
+#include "parser.h"
 #include "tools.h"
 
 namespace RyRuntime {
@@ -558,6 +563,53 @@ namespace RyRuntime {
 					}
 
 					push(RyValue(mapPtr));
+					break;
+				}
+				case OP_IMPORT: {
+					RyValue fileNameValue = pop();
+					if (!fileNameValue.isString()) {
+						runtimeError("Import path must be a string.");
+						return INTERPRET_RUNTIME_ERROR;
+					}
+					std::string fileName = fileNameValue.to_string();
+
+					// Read the file
+					std::ifstream file(fileName);
+					if (!file.is_open()) {
+						runtimeError("Could not open script file '%s'.", fileName.c_str());
+						return INTERPRET_RUNTIME_ERROR;
+					}
+					std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+					// Compile the imported script
+					Backend::Lexer lexer(source);
+					auto tokens = lexer.scanTokens();
+
+					// Use a temporary set for aliases if needed
+					std::set<std::string> tempAliases;
+					Backend::Parser parser(tokens, tempAliases, source);
+					auto statements = parser.parse();
+
+					Compiler compiler;
+					Chunk chunk;
+					if (!compiler.compile(statements, &chunk)) {
+						runtimeError("Failed to compile imported script '%s'.", fileName.c_str());
+						return INTERPRET_RUNTIME_ERROR;
+					}
+
+					// 3. Execute the script immediately
+					auto function = std::make_shared<Frontend::RyFunction>(std::move(chunk), fileName, 0);
+
+					// We push the function and call it like a regular Ry function
+					// This ensures its 'data' and 'fn' definitions hit the 'globals' map
+					push(RyValue(function));
+					CallFrame *frame = &frames[frameCount++];
+					frame->function = function;
+					frame->ip = function->chunk.code.data();
+					frame->slots = stackTop - 1;
+
+					// The VM will now continue running the code inside the imported file
+					// before returning to the original script.
 					break;
 				}
 				default:

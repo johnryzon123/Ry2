@@ -89,9 +89,9 @@ namespace Backend {
 	};
 
 	struct ImportStmt : public Stmt {
-		Token module;
+		std::shared_ptr<Expr> module;
 
-		explicit ImportStmt(Token m) : module(std::move(m)) {}
+		explicit ImportStmt(std::shared_ptr<Expr> m) : module(std::move(m)) {}
 		void accept(StmtVisitor &visitor) override { visitor.visitImportStmt(*this); }
 	};
 
@@ -220,7 +220,8 @@ namespace Backend {
 		Token error;
 		std::vector<std::shared_ptr<Stmt>> finallyBody;
 
-		AttemptStmt(std::vector<std::shared_ptr<Stmt>> aBody, std::vector<std::shared_ptr<Stmt>> fBody, Token e, std::vector<std::shared_ptr<Stmt>> fiBody, Token errorType) :
+		AttemptStmt(std::vector<std::shared_ptr<Stmt>> aBody, std::vector<std::shared_ptr<Stmt>> fBody, Token e,
+								std::vector<std::shared_ptr<Stmt>> fiBody, Token errorType) :
 				attemptBody(aBody), failBody(fBody), error(e), finallyBody(std::move(fiBody)), errorType(errorType) {}
 		void accept(StmtVisitor &visitor) override { visitor.visitAttemptStmt(*this); }
 	};

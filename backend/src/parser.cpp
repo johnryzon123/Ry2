@@ -487,7 +487,7 @@ std::shared_ptr<FunctionStmt> Parser::functionDeclaration(const std::string &kin
 
 std::shared_ptr<Stmt> Parser::ImportDeclaration() {
 	consume(TokenType::LPAREN, "Expect '(' after import.");
-	Token module = consume(TokenType::STRING, "Expect module after import.");
+	std::shared_ptr<Expr> module = expression();
 	consume(TokenType::RPAREN, "Expect ')' after import.");
 	return std::make_shared<ImportStmt>(module);
 }

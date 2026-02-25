@@ -67,6 +67,7 @@ namespace RyRuntime {
 		OP_FUNCTION, // func test() {}
 		OP_ATTEMPT, // attempt {} fail err {}
 		OP_END_ATTEMPT,
+		OP_IMPORT
 	};
 
 	// The sequence of bytecode

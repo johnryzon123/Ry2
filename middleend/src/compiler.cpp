@@ -503,7 +503,10 @@ namespace RyRuntime {
 	}
 	void Compiler::visitStopStmt(StopStmt &stmt) {}
 	void Compiler::visitSkipStmt(SkipStmt &stmt) {}
-	void Compiler::visitImportStmt(ImportStmt &stmt) {}
+	void Compiler::visitImportStmt(ImportStmt &stmt) {
+		stmt.module->accept(*this);
+		emitByte(OP_IMPORT);
+	}
 	void Compiler::visitAliasStmt(AliasStmt &stmt) {}
 	void Compiler::visitNamespaceStmt(NamespaceStmt &stmt) {}
 	void Compiler::visitEachStmt(EachStmt &stmt) {
