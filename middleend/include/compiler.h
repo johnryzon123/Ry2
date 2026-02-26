@@ -4,6 +4,8 @@
 #include "chunk.h"
 #include "expr.h"
 #include "stmt.h"
+#include "token.h"
+#include "tools.h"
 
 namespace RyRuntime {
 
@@ -11,17 +13,29 @@ namespace RyRuntime {
 		Backend::Token name;
 		int depth;
 		bool isCaptured = false;
+
+		Local(Backend::Token n, int d, bool c = false) : name(n), depth(d), isCaptured(c) {}
+	};
+	enum LoopType { LOOP_WHILE, LOOP_FOR, LOOP_EACH };
+	struct LoopContext {
+		int startIP;
+		std::vector<int> breakJumps;
+		int scopeDepth;
+		LoopType type;
 	};
 
 	class Compiler : public Backend::ExprVisitor, public Backend::StmtVisitor {
 	public:
+		Compiler(const std::string &source) : sourceCode(source) { RyTools::hadError = false; }
 		// Main entry point: takes source and returns a compiled chunk
 		bool compile(const std::vector<std::shared_ptr<Backend::Stmt>> &statements, Chunk *chunk);
 
 	private:
-		// Current line and collumn for error reporting
+		// Error reporting
 		int currentLine;
 		int currentColumn;
+		void error(const Backend::Token &token, const std::string &message);
+		std::string sourceCode;
 
 		// --- Visitors ---
 		void visitMath(Backend::MathExpr &expr);
@@ -85,6 +99,9 @@ namespace RyRuntime {
 		void endScope();
 		int resolveLocal(Backend::Token &name);
 		void addLocal(Backend::Token name);
+
+		// Stack helpers
+		std::vector<LoopContext> loopStack;
 	};
 } // namespace RyRuntime
 

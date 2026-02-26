@@ -39,7 +39,7 @@ void interpret(VM &vm, const std::string &source) {
 		return;
 
 	//  Compiling
-	Compiler compiler;
+	Compiler compiler = Compiler(source);
 	Chunk chunk;
 	if (!compiler.compile(statements, &chunk)) {
 		std::cout << "Compilation failed.\n";

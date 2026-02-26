@@ -5,6 +5,7 @@
 #include "func.h"
 #include "stmt.h"
 #include "token.h"
+#include "tools.h"
 
 using namespace Backend;
 
@@ -12,6 +13,7 @@ namespace RyRuntime {
 	bool Compiler::compile(const std::vector<std::shared_ptr<Backend::Stmt>> &statements, Chunk *chunk) {
 		this->compilingChunk = chunk;
 		this->locals.clear();
+		locals.push_back({Token(), 0, false});
 		this->scopeDepth = 0;
 
 		for (const auto &stmt: statements) {
@@ -96,7 +98,7 @@ namespace RyRuntime {
 	}
 
 	void Compiler::addLocal(Token name) {
-		Local local = {name, scopeDepth, false};
+		Local local = Local(name, scopeDepth, false);
 		locals.push_back(local);
 	}
 
@@ -108,6 +110,13 @@ namespace RyRuntime {
 			}
 		}
 		return -1;
+	}
+
+	// --- Error reporting ---
+	void Compiler::error(const Backend::Token &token, const std::string &message) {
+		RyTools::report(token.line, token.column, "", message, this->sourceCode);
+
+		RyTools::hadError = true;
 	}
 
 	// --- Visitors ---
@@ -279,7 +288,16 @@ namespace RyRuntime {
 
 	void Compiler::visitWhileStmt(WhileStmt &stmt) {
 		int loopStart = compilingChunk->code.size();
+
+
+		LoopContext context = LoopContext();
+		context.startIP = loopStart;
+		context.scopeDepth = this->scopeDepth;
+		context.type = LOOP_WHILE;
+		loopStack.push_back(context);
+
 		compileExpression(stmt.condition);
+
 
 		int exitJump = emitJump(OP_JUMP_IF_FALSE);
 		emitByte(OP_POP);
@@ -289,6 +307,10 @@ namespace RyRuntime {
 
 		patchJump(exitJump);
 		emitByte(OP_POP);
+		for (int location: context.breakJumps) {
+			patchJump(location);
+		}
+		loopStack.pop_back();
 	}
 
 	void Compiler::visitForStmt(ForStmt &stmt) {
@@ -297,6 +319,11 @@ namespace RyRuntime {
 			compileStatement(stmt.init);
 
 		int loopStart = compilingChunk->code.size();
+		LoopContext context = LoopContext();
+		context.startIP = loopStart;
+		context.scopeDepth = this->scopeDepth;
+		context.type = LOOP_FOR;
+		loopStack.push_back(context);
 
 		int exitJump = -1;
 		if (stmt.condition) {
@@ -318,6 +345,11 @@ namespace RyRuntime {
 			patchJump(exitJump);
 			emitByte(OP_POP);
 		}
+
+		for (int location: context.breakJumps) {
+			patchJump(location);
+		}
+		loopStack.pop_back();
 		endScope();
 	}
 
@@ -386,7 +418,7 @@ namespace RyRuntime {
 
 		// Compile the function's internal world
 		beginScope();
-		locals.push_back({Token{TokenType::IDENTIFIER, "", nullptr, 0, 0}, 0, false});
+		locals.push_back({Token(), 0, false});
 
 		for (const auto &param: stmt.parameters) {
 			addLocal(param.name);
@@ -501,47 +533,109 @@ namespace RyRuntime {
 			emitByte(OP_RIGHT_SHIFT);
 		}
 	}
-	void Compiler::visitStopStmt(StopStmt &stmt) {}
-	void Compiler::visitSkipStmt(SkipStmt &stmt) {}
+	void Compiler::visitStopStmt(StopStmt &stmt) {
+		if (loopStack.empty()) {
+			error(stmt.keyword, "Cannot use 'stop' outside of a loop.");
+			return;
+		}
+
+		int count = 0;
+		for (int i = locals.size() - 1; i >= 0; i--) {
+			if (locals[i].depth > loopStack.back().scopeDepth) {
+				count++;
+			} else {
+				break;
+			}
+		}
+		for (int i = 0; i < count; i++)
+			emitByte(OP_POP);
+
+		if (loopStack.back().type == LOOP_EACH) {
+			emitBytes(OP_POP, OP_POP);
+		}
+
+		emitByte(OP_JUMP);
+		emitByte(0xff);
+		emitByte(0xff);
+		loopStack.back().breakJumps.push_back(compilingChunk->code.size() - 2);
+	}
+	void Compiler::visitSkipStmt(SkipStmt &stmt) {
+		if (loopStack.empty()) {
+			error(stmt.keyword, "Cannot use 'skip' outside of a loop.");
+			return;
+		}
+
+		int localsToPop = 0;
+		for (int i = locals.size() - 1; i >= 0; i--) {
+			if (locals[i].depth > loopStack.back().scopeDepth) {
+				localsToPop++;
+			} else {
+				break;
+			}
+		}
+
+		for (int i = 0; i < localsToPop; i++) {
+			emitByte(OP_POP);
+		}
+
+		emitLoop(loopStack.back().startIP);
+	}
 	void Compiler::visitImportStmt(ImportStmt &stmt) {
 		stmt.module->accept(*this);
 		emitByte(OP_IMPORT);
 	}
-	void Compiler::visitAliasStmt(AliasStmt &stmt) {}
-	void Compiler::visitNamespaceStmt(NamespaceStmt &stmt) {}
-	void Compiler::visitEachStmt(EachStmt &stmt) {
-		// Push Collection
-		compileExpression(stmt.collection);
-		// Push initial Index
-		emitConstant(RyValue(0.0));
+	void Compiler::visitAliasStmt(AliasStmt &stmt) {
+		// Evaluate the expression we are aliasing (e.g., Math.sqrt)
+		compileExpression(stmt.aliasExpr);
 
-		Token dummyToken = {TokenType::Nothing_Here, "", nullptr, 0, 0};
-		addLocal(dummyToken); // Represents the Collection slot
-		addLocal(dummyToken); // Represents the Index slot
-		addLocal(dummyToken); // Represents the data
+		// Define it in the global map under the NEW name
+		uint8_t constant = (uint8_t) makeConstant(RyValue(stmt.name.lexeme));
+		emitBytes(OP_DEFINE_GLOBAL, constant);
+	}
+	void Compiler::visitNamespaceStmt(NamespaceStmt &stmt) {
+		for (const auto &s: stmt.body) {
+			compileStatement(s);
+		}
+	}
+	void Compiler::visitEachStmt(EachStmt &stmt) {
+		compileExpression(stmt.collection); // Pushes Collection
+		emitConstant(RyValue(0.0)); // Pushes Index
+
+		Token dummy;
+		addLocal(dummy); // Collection
+		addLocal(dummy); // Index
 
 		int loopStart = compilingChunk->code.size();
+
+		LoopContext context = LoopContext();
+		context.startIP = loopStart;
+		context.scopeDepth = this->scopeDepth;
+		context.type = LOOP_EACH;
+		loopStack.push_back(context);
+
 		int exitJump = emitJump(OP_FOR_EACH_NEXT);
 
-		// Now, when it adds the loop variable, it will be at the
-		// stack top where OP_FOR_EACH_NEXT just pushed 'current'!
 		beginScope();
+
+		// Register the variable name
 		addLocal(stmt.id);
 
 		compileStatement(stmt.body);
+
 		endScope();
 
 		emitLoop(loopStart);
 		patchJump(exitJump);
 
-		// Pop the 4 things it pushed (Item, Index, Collection, Data)
-		emitBytes(OP_POP, OP_POP);
-		emitBytes(OP_POP, OP_POP);
+		emitBytes(OP_POP, OP_POP); // Clean up the hidden Range and Index
+		locals.pop_back();
+		locals.pop_back();
 
-		// Remove the 3 phantom locals from the compiler's tracking
-		locals.pop_back();
-		locals.pop_back();
-		locals.pop_back();
+		for (int location: loopStack.back().breakJumps) {
+			patchJump(location);
+		}
+
+		loopStack.pop_back();
 	}
 	void Compiler::visitAttemptStmt(AttemptStmt &stmt) {
 		// Emit OP_ATTEMPT and a placeholder for the jump to the 'fail' block

@@ -328,6 +328,22 @@ namespace RyRuntime {
 
 					int index = (int) indexValue.asNumber();
 
+					if (!indexValue.isNumber()) {
+						std::cerr << "\n[ENGINE ERROR] Stack Corruption Detected!" << std::endl;
+						std::cerr << "Expected Number (Double) for loop index, but found: " << indexValue.to_string() << std::endl;
+
+						// THE STACK TRACE
+						std::cerr << "--- VM STACK TRACE ---" << std::endl;
+						for (RyValue *slot = stackTop - 1; slot >= stack; slot--) {
+							int index = slot - stack;
+
+							std::cerr << "[" << index << "]: " << slot->to_string() << std::endl;
+						}
+						std::cerr << "----------------------" << std::endl;
+
+						// Now we can exit gracefully or throw to see the GDB trace
+						exit(1);
+					}
 
 					if (collectionValue.isRange()) {
 						RyRange range = collectionValue.asRange();
@@ -337,19 +353,19 @@ namespace RyRuntime {
 						double current = range.start + index;
 
 						// Check bounds
-						bool isInBounds = (range.start <= range.end) ? (current <= range.end) : (current >= range.end);
+						bool isInBounds = (range.start < range.end) ? (current < range.end) : (current > range.end);
 
 						if (isInBounds) {
-							push(RyValue(current));
-							*(stackTop - 2) = RyValue((double) (index + 1));
+							*(stackTop - 1) = RyValue((double) (index + 1));
+							push(RyValue((double) current));
 						} else {
 							FRAME.ip += offset;
 						}
 					} else if (collectionValue.isList()) {
 						auto list = collectionValue.asList();
 						if (index < list->size()) {
-							push((*list)[index]);
 							*(stackTop - 2) = RyValue((double) (index + 1));
+							push((*list)[index]);
 						} else {
 							FRAME.ip += offset;
 						}
@@ -590,14 +606,14 @@ namespace RyRuntime {
 					Backend::Parser parser(tokens, tempAliases, source);
 					auto statements = parser.parse();
 
-					Compiler compiler;
+					Compiler compiler = Compiler(source);
 					Chunk chunk;
 					if (!compiler.compile(statements, &chunk)) {
 						runtimeError("Failed to compile imported script '%s'.", fileName.c_str());
 						return INTERPRET_RUNTIME_ERROR;
 					}
 
-					// 3. Execute the script immediately
+					// Execute the script immediately
 					auto function = std::make_shared<Frontend::RyFunction>(std::move(chunk), fileName, 0);
 
 					// We push the function and call it like a regular Ry function

@@ -199,8 +199,7 @@ std::shared_ptr<Expr> Parser::bitwiseAnd() {
 }
 
 void Parser::error(const Token &token, const std::string &message) {
-	std::string where = (token.type == TokenType::EOF_TOKEN) ? " at end" : " at '" + token.lexeme + "'";
-	RyTools::report(token.line, token.column, where, message, sourceCode);
+	RyTools::report(token.line, token.column, "", message, sourceCode);
 	throw RyTools::ParseError();
 }
 std::shared_ptr<Expr> Parser::expression() {

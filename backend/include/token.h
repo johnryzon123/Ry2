@@ -96,6 +96,7 @@ namespace Backend {
 		int column;
 		Token(TokenType t, std::string lex, RyValue lit, int l, int c) :
 				type(t), lexeme(std::move(lex)), literal(std::move(lit)), line(l), column(c) {}
+		Token() : type(TokenType::Nothing_Here), lexeme(""), literal(RyValue()), line(0), column(0) {}
 	};
 
 	inline static const std::unordered_map<std::string, TokenType> keywords{
@@ -109,5 +110,5 @@ namespace Backend {
 			{"skip", TokenType::SKIP},			 {"unless", TokenType::UNLESS},		{"until", TokenType::UNTIL},
 			{"do", TokenType::DO},					 {"class", TokenType::CLASS},			{"private", TokenType::PRIVATE},
 			{"childof", TokenType::CHILDOF}, {"attempt", TokenType::ATTEMPT}, {"fail", TokenType::FAIL},
-			{"panic", TokenType::PANIC}, {"finally", TokenType::FINALLY}};
+			{"panic", TokenType::PANIC},		 {"finally", TokenType::FINALLY}};
 } // namespace Backend

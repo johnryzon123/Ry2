@@ -1,9 +1,6 @@
-attempt {
-    attempt {
-        out(10/0)
-    } fail err :: IOError {
-        out("This won't catch it!")
+foreach data i in 1 to 3 {
+    foreach data j in 10 to 13 {
+        if j == 12 { stop }
+        out(i + " - " + j)
     }
-} fail err {
-    out("Caught the MathError in the outer block: ${err}")
 }
