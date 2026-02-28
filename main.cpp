@@ -50,6 +50,10 @@ void interpret(VM &vm, const std::string &source) {
 
 	// Running
 	vm.interpret(function);
+	std::fflush(stdout);
+	std::fflush(stderr);
+	std::cout << std::flush;
+	std::cerr << std::flush;
 }
 
 void runREPL(VM &vm) {
@@ -71,7 +75,7 @@ void runREPL(VM &vm) {
 		if (line == "quit")
 			break;
 		if (line == "clear") {
-			system("clear");
+			auto _ = system("clear");
 			buffer.clear();
 			indentLevel = 0;
 			continue;

@@ -1,11 +1,14 @@
 #ifndef ry_compiler_h
 #define ry_compiler_h
 
+#include <unordered_set>
 #include "chunk.h"
 #include "expr.h"
 #include "stmt.h"
 #include "token.h"
 #include "tools.h"
+#include "native.hpp"
+
 
 namespace RyRuntime {
 
@@ -26,7 +29,12 @@ namespace RyRuntime {
 
 	class Compiler : public Backend::ExprVisitor, public Backend::StmtVisitor {
 	public:
-		Compiler(const std::string &source) : sourceCode(source) { RyTools::hadError = false; }
+		Compiler(const std::string &source) : sourceCode(source) {
+			RyTools::hadError = false;
+			for (const auto &name: getNativeNames()) {
+				nativeNames.insert(name);
+			}
+		}
 		// Main entry point: takes source and returns a compiled chunk
 		bool compile(const std::vector<std::shared_ptr<Backend::Stmt>> &statements, Chunk *chunk);
 
@@ -36,6 +44,7 @@ namespace RyRuntime {
 		int currentColumn;
 		void error(const Backend::Token &token, const std::string &message);
 		std::string sourceCode;
+		void track(Backend::Token token);
 
 		// --- Visitors ---
 		void visitMath(Backend::MathExpr &expr);
@@ -94,11 +103,13 @@ namespace RyRuntime {
 
 		// Scope & Locals
 		std::vector<Local> locals;
+		std::string currentNamespace;
 		int scopeDepth = 0;
 		void beginScope();
 		void endScope();
 		int resolveLocal(Backend::Token &name);
 		void addLocal(Backend::Token name);
+		std::unordered_set<std::string> nativeNames;
 
 		// Stack helpers
 		std::vector<LoopContext> loopStack;

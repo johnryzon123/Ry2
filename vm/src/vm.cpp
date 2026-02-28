@@ -70,24 +70,7 @@ namespace RyRuntime {
 		vsnprintf(buffer, sizeof(buffer), format, args);
 		va_end(args);
 
-		// Sanity check: Ensure we actually have a frame to report from
-		if (frameCount > 0) {
-			auto &frame = frames[frameCount - 1];
-
-			// Safety check: Ensure IP is within the code bounds
-			size_t instruction = frame.ip - frame.function->chunk.code.data() - 1;
-
-			if (instruction < frame.function->chunk.lines.size()) {
-				int line = frame.function->chunk.lines[instruction];
-				RyTools::report(line, 1, "", buffer, vmSource);
-			} else {
-				std::cerr << RyColor::RED << "Runtime Error: " << RyColor::RESET << buffer << "\n";
-			}
-		} else {
-			std::cerr << RyColor::RED << "Runtime Error: " << RyColor::RESET << buffer << "\n";
-		}
-
-		resetStack();
+		push(RyValue(std::string(buffer)));
 	}
 
 	InterpretResult VM::interpret(std::shared_ptr<Frontend::RyFunction> function) {
@@ -119,21 +102,34 @@ namespace RyRuntime {
 	}
 
 	InterpretResult VM::run() {
-// Everything points to the current frame
 #define FRAME (frames[frameCount - 1])
 #define READ_BYTE() (*FRAME.ip++)
 #define READ_CONSTANT() (FRAME.function->chunk.constants[READ_BYTE()])
 #define READ_SHORT() (FRAME.ip += 2, (uint16_t) ((FRAME.ip[-2] << 8) | FRAME.ip[-1]))
+#define RY_PANIC(format, ...)                                                                                          \
+	{                                                                                                                    \
+		runtimeError(format, ##__VA_ARGS__);                                                                               \
+		push(RyValue(buffer));                                                                                             \
+		goto trigger_panic;                                                                                                \
+	}
 
 		for (;;) {
-
+			// Debug: Print stack height
+			/* std::cout << "Stack height: " << (long) (stackTop - stack) << " Frames: " << frames << std::endl;
+			std::cout << "--- STACK DEBUG (Height: " << (stackTop - stack) << ") ---" << std::endl;
+			for (RyValue *slot = stack; slot < stackTop; slot++) {
+				std::cout << "[" << (slot - stack) << "]" << " Value: " << slot->to_string()
+									<< std::endl;
+			}
+			std::cout << "--------------------------" << std::endl;
+			*/
 			if (stackTop < stack) {
 				runtimeError("Stack Underflow! Pointer: %p, Base: %p", stackTop, stack);
-				return INTERPRET_RUNTIME_ERROR;
+				goto trigger_panic;
 			}
 			if (stackTop >= stack + STACK_MAX) {
 				runtimeError("Stack Overflow!");
-				return INTERPRET_RUNTIME_ERROR;
+				goto trigger_panic;
 			}
 
 			uint8_t instruction;
@@ -179,7 +175,7 @@ namespace RyRuntime {
 						push(RyValue(a.to_string() + b.to_string()));
 					} else {
 						runtimeError("Operands must be numbers, strings, or lists.");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 					break;
 				}
@@ -191,7 +187,7 @@ namespace RyRuntime {
 						push(RyValue(a.asNumber() - b.asNumber()));
 					} else {
 						runtimeError("Operands must be numbers");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 					break;
 				}
@@ -227,7 +223,7 @@ namespace RyRuntime {
 						push(RyValue(result));
 					} else {
 						runtimeError("Operands must be numbers, strings, or lists.");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 					break;
 				}
@@ -284,7 +280,8 @@ namespace RyRuntime {
 				}
 				case OP_SET_LOCAL: {
 					uint8_t slot = READ_BYTE();
-					FRAME.slots[slot] = *(stackTop - 1);
+					// Debug: FRAME.slots[slot] = *(stackTop - 1);
+					FRAME.slots[slot] = pop();
 					break;
 				}
 				case OP_JUMP: {
@@ -332,7 +329,7 @@ namespace RyRuntime {
 							runtimeError("Undefined variable '%s'.", name.c_str());
 						}
 
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 					push(it->second);
 					break;
@@ -360,29 +357,37 @@ namespace RyRuntime {
 							runtimeError("Undefined variable '%s'.", name.c_str());
 						}
 
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 
-					it->second = *(stackTop - 1);
+					// D it->second = *(stackTop - 1);
+					it->second = pop();
 					break;
 				}
 				case OP_PANIC: {
 				trigger_panic:
 					RyValue message = pop();
+					std::string output = message.isNil() ? "Unknown Panic" : message.to_string();
 
 					if (panicStack.empty()) {
-						std::string output = message.isNil() ? "" : message.to_string();
-						std::cerr << output << "\n";
+						if (frameCount > 0) {
+							auto &frame = frames[frameCount - 1];
+							size_t instruction = frame.ip - frame.function->chunk.code.data() - 1;
+							int line = frame.function->chunk.lines[instruction];
+							int column = frame.function->chunk.columns[instruction];
+
+							RyTools::report(line, column, "", output, vmSource);
+						}
+
 						resetStack();
 						return INTERPRET_RUNTIME_ERROR;
 					}
 
-					// Found an 'attempt' block! (The 'catch' equivalent)
 					ControlBlock block = panicStack.back();
 					panicStack.pop_back();
 
 					stackTop = stack + block.stackDepth;
-					push(message); // Pass the 'exception' object to the handler
+					push(RyValue(output));
 
 					FRAME.ip = FRAME.function->chunk.code.data() + block.handlerIP;
 					break;
@@ -411,13 +416,13 @@ namespace RyRuntime {
 							push(result);
 						} catch (const std::runtime_error &e) {
 							runtimeError("%s", e.what());
-							return INTERPRET_RUNTIME_ERROR;
+							goto trigger_panic;
 						}
 					} else if (callee.isFunction()) {
 						// Check arity here!
 						if (argCount != callee.asFunction()->arity) {
 							runtimeError("Expected %d arguments but got %d.", callee.asFunction()->arity, argCount);
-							return INTERPRET_RUNTIME_ERROR;
+							goto trigger_panic;
 						}
 
 						CallFrame *frame = &frames[frameCount++];
@@ -426,7 +431,7 @@ namespace RyRuntime {
 						frame->slots = stackTop - argCount - 1;
 					} else {
 						runtimeError("Can only call functions and classes.");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 					break;
 				}
@@ -493,14 +498,14 @@ namespace RyRuntime {
 					} else if (collectionValue.isList()) {
 						auto list = collectionValue.asList();
 						if (index < list->size()) {
-							*(stackTop - 2) = RyValue((double) (index + 1));
+							*(stackTop - 1) = RyValue((double) (index + 1));
 							push((*list)[index]);
 						} else {
 							FRAME.ip += offset;
 						}
 					} else {
 						runtimeError("Can only use 'each' on lists or ranges.");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 					break;
 				}
@@ -540,7 +545,7 @@ namespace RyRuntime {
 						panicStack.pop_back();
 					} else {
 						runtimeError("Cannot end attempt if panicStack is empty.");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 					break;
 				}
@@ -553,14 +558,14 @@ namespace RyRuntime {
 						// Ensure the index is a number
 						if (!index.isNumber()) {
 							runtimeError("List index must be a number.");
-							return INTERPRET_RUNTIME_ERROR;
+							goto trigger_panic;
 						}
 						int i = (int) index.asNumber();
 						if (i >= 0 && i < list->size()) {
 							push((*list)[i]);
 						} else {
 							runtimeError("List index out of bounds.");
-							return INTERPRET_RUNTIME_ERROR;
+							goto trigger_panic;
 						}
 					} else if (object.isMap()) {
 						auto ryMap = object.asMap();
@@ -569,11 +574,11 @@ namespace RyRuntime {
 							push((*ryMap)[index]);
 						} else {
 							runtimeError("Key '%s' not found in map.", index.to_string().c_str());
-							return INTERPRET_RUNTIME_ERROR;
+							goto trigger_panic;
 						}
 					} else {
 						runtimeError("Can only index lists and maps.");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 					break;
 				}
@@ -618,7 +623,7 @@ namespace RyRuntime {
 					// If we found nothing, pop the object before throwing the error
 					pop();
 					runtimeError("Property '%s' not found on type.", propertyName.c_str());
-					return INTERPRET_RUNTIME_ERROR;
+					goto trigger_panic;
 				}
 				case OP_SET_INDEX: {
 					RyValue value = pop();
@@ -630,13 +635,13 @@ namespace RyRuntime {
 						// Ensure the index is a number
 						if (!index.isNumber()) {
 							runtimeError("List index must be a number.");
-							return INTERPRET_RUNTIME_ERROR;
+							goto trigger_panic;
 						}
 						(*list)[(int) index.asNumber()] = value;
-						push(value);
+						// D push(value);
 					} else {
 						runtimeError("Only lists can be indexed currently.");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 					break;
 				}
@@ -648,7 +653,7 @@ namespace RyRuntime {
 					// Ensure that they are numbers to avoid crashing
 					if (!a.isNumber() || !b.isNumber()) {
 						runtimeError("Operands must be numbers for bitwise operations.");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 
 					// Cast to integers for the C++ bitwise & operator
@@ -663,7 +668,7 @@ namespace RyRuntime {
 					// Ensure that they are numbers to avoid crashing
 					if (!a.isNumber() || !b.isNumber()) {
 						runtimeError("Operands must be numbers for bitwise operations.");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 
 					// Cast to integers for the C++ bitwise | operator
@@ -678,7 +683,7 @@ namespace RyRuntime {
 					// Ensure that they are numbers to avoid crashing
 					if (!a.isNumber() || !b.isNumber()) {
 						runtimeError("Operands must be numbers for bitwise operations.");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 
 					// Cast to integers for the C++ bitwise ^ operator
@@ -693,7 +698,7 @@ namespace RyRuntime {
 					// Ensure that they are numbers to avoid crashing
 					if (!a.isNumber() || !b.isNumber()) {
 						runtimeError("Operands must be numbers for bitwise operations.");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 
 					// Cast to integers for the C++ bitwise << operator
@@ -708,7 +713,7 @@ namespace RyRuntime {
 					// Ensure that they are numbers to avoid crashing
 					if (!a.isNumber() || !b.isNumber()) {
 						runtimeError("Operands must be numbers for bitwise operations.");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 
 					// Cast to integers for the C++ bitwise >> operator
@@ -737,15 +742,15 @@ namespace RyRuntime {
 					RyValue fileNameValue = pop();
 					if (!fileNameValue.isString()) {
 						runtimeError("Import path must be a string.");
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
-					std::string fileName = fileNameValue.to_string();
+					std::string fileName = RyTools::findModulePath(fileNameValue.to_string(), false);
 
 					// Read the file
 					std::ifstream file(fileName);
 					if (!file.is_open()) {
 						runtimeError("Could not open script file '%s'.", fileName.c_str());
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 					std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
@@ -762,7 +767,7 @@ namespace RyRuntime {
 					Chunk chunk;
 					if (!compiler.compile(statements, &chunk)) {
 						runtimeError("Failed to compile imported script '%s'.", fileName.c_str());
-						return INTERPRET_RUNTIME_ERROR;
+						goto trigger_panic;
 					}
 
 					// Execute the script immediately

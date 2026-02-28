@@ -13,8 +13,10 @@ namespace RyRuntime {
 	bool Compiler::compile(const std::vector<std::shared_ptr<Backend::Stmt>> &statements, Chunk *chunk) {
 		this->compilingChunk = chunk;
 		this->locals.clear();
-		locals.push_back({Token(), 0, false});
 		this->scopeDepth = 0;
+		Token internal;
+		internal.lexeme = "(script)";
+		addLocal(internal);
 
 		for (const auto &stmt: statements) {
 			compileStatement(stmt);
@@ -119,11 +121,15 @@ namespace RyRuntime {
 		RyTools::hadError = true;
 	}
 
+	void Compiler::track(Token token) {
+		this->currentLine = token.line;
+		this->currentColumn = token.column;
+	}
+
 	// --- Visitors ---
 
 	void Compiler::visitMath(MathExpr &expr) {
-		currentColumn = expr.op_t.column;
-		currentLine = expr.op_t.line;
+		track(expr.op_t);
 
 		compileExpression(expr.left);
 		compileExpression(expr.right);
@@ -170,20 +176,32 @@ namespace RyRuntime {
 	void Compiler::visitGroup(GroupExpr &expr) { compileExpression(expr.expression); }
 
 	void Compiler::visitVariable(VariableExpr &expr) {
-		currentColumn = expr.name.column;
-		currentLine = expr.name.line;
+		track(expr.name);
+		std::string name = expr.name.lexeme;
 
 		int arg = resolveLocal(expr.name);
 		if (arg != -1) {
 			emitBytes(OP_GET_LOCAL, (uint8_t) arg);
-		} else {
-			emitBytes(OP_GET_GLOBAL, (uint8_t) makeConstant(RyValue(expr.name.lexeme)));
+			return;
 		}
+
+		if (name.find("::") != std::string::npos) {
+			emitBytes(OP_GET_GLOBAL, (uint8_t) makeConstant(RyValue(name)));
+			return;
+		}
+
+		bool isNative = nativeNames.count(name) > 0;
+
+		if (!currentNamespace.empty() && !isNative && !name.starts_with("native") &&
+				name.find("::") == std::string::npos) {
+			name = currentNamespace + "::" + name;
+		}
+
+		emitBytes(OP_GET_GLOBAL, (uint8_t) makeConstant(RyValue(name)));
 	}
 
 	void Compiler::visitValue(ValueExpr &expr) {
-		currentColumn = expr.value.column;
-		currentLine = expr.value.line;
+		track(expr.value);
 
 		if (expr.value.type == TokenType::TRUE) {
 			emitByte(OP_TRUE);
@@ -200,8 +218,7 @@ namespace RyRuntime {
 	}
 
 	void Compiler::visitLogical(LogicalExpr &expr) {
-		currentColumn = expr.op_t.column;
-		currentLine = expr.op_t.line;
+		track(expr.op_t);
 
 		compileExpression(expr.left);
 		if (expr.op_t.type == TokenType::AND) {
@@ -219,8 +236,7 @@ namespace RyRuntime {
 		}
 	}
 	void Compiler::visitRange(RangeExpr &expr) {
-		currentColumn = expr.op_t.column;
-		currentLine = expr.op_t.line;
+		track(expr.op_t);
 
 		// Compile the start (e.g., 1)
 		compileExpression(expr.leftBound);
@@ -239,16 +255,24 @@ namespace RyRuntime {
 	}
 
 	void Compiler::visitAssign(AssignExpr &expr) {
+		track(expr.name);
 		compileExpression(expr.value);
 		int arg = resolveLocal(expr.name);
 		if (arg != -1) {
 			emitBytes(OP_SET_LOCAL, (uint8_t) arg);
 		} else {
-			emitBytes(OP_SET_GLOBAL, (uint8_t) makeConstant(RyValue(expr.name.lexeme)));
+			std::string name = expr.name.lexeme;
+
+			if (name.find("::") == std::string::npos && !currentNamespace.empty()) {
+				name = currentNamespace + "::" + name;
+			}
+
+			emitBytes(OP_SET_GLOBAL, (uint8_t) makeConstant(RyValue(name)));
 		}
 	}
 
 	void Compiler::visitCall(CallExpr &expr) {
+		track(expr.Paren);
 		compileExpression(expr.callee);
 		for (const auto &arg: expr.arguments) {
 			compileExpression(arg);
@@ -258,6 +282,10 @@ namespace RyRuntime {
 
 	void Compiler::visitExpressionStmt(ExpressionStmt &stmt) {
 		compileExpression(stmt.expression);
+		if (std::dynamic_pointer_cast<AssignExpr>(stmt.expression) ||
+				std::dynamic_pointer_cast<IndexSetExpr>(stmt.expression)) {
+			return;
+		}
 		emitByte(OP_POP);
 	}
 
@@ -354,6 +382,7 @@ namespace RyRuntime {
 	}
 
 	void Compiler::visitVarStmt(VarStmt &stmt) {
+		track(stmt.name);
 		if (stmt.initializer) {
 			compileExpression(stmt.initializer);
 		} else {
@@ -361,13 +390,23 @@ namespace RyRuntime {
 		}
 
 		if (scopeDepth > 0) {
-			addLocal(stmt.name);
+			std::string name = stmt.name.lexeme;
+			size_t lastColon = name.find_last_of(':');
+			if (lastColon != std::string::npos) {
+				Token baseName = stmt.name;
+				baseName.lexeme = name.substr(lastColon + 1);
+				addLocal(baseName);
+			} else {
+				addLocal(stmt.name);
+			}
 		} else {
-			emitBytes(OP_DEFINE_GLOBAL, (uint8_t) makeConstant(RyValue(stmt.name.lexeme)));
+			std::string name = stmt.name.lexeme;
+			emitBytes(OP_DEFINE_GLOBAL, (uint8_t) makeConstant(RyValue(name)));
 		}
 	}
 
 	void Compiler::visitReturnStmt(ReturnStmt &stmt) {
+		track(stmt.keyword);
 		if (stmt.value)
 			compileExpression(stmt.value);
 		else
@@ -376,6 +415,7 @@ namespace RyRuntime {
 	}
 
 	void Compiler::visitPrefix(PrefixExpr &expr) {
+		track(expr.prefix);
 		compileExpression(expr.right);
 		if (expr.prefix.type == TokenType::MINUS)
 			emitByte(OP_NEGATE);
@@ -384,6 +424,7 @@ namespace RyRuntime {
 	}
 
 	void Compiler::visitPanicStmt(PanicStmt &stmt) {
+		track(stmt.keyword);
 		if (stmt.message)
 			compileExpression(stmt.message);
 		else
@@ -392,23 +433,35 @@ namespace RyRuntime {
 	}
 
 	void Compiler::visitClassStmt(ClassStmt &stmt) {
+		track(stmt.name);
 		emitBytes(OP_CLASS, (uint8_t) makeConstant(RyValue(stmt.name.lexeme)));
 		emitBytes(OP_DEFINE_GLOBAL, (uint8_t) makeConstant(RyValue(stmt.name.lexeme)));
 	}
 
 	// --- Placeholders for Linker Satisfaction ---
-	void Compiler::visitThis(ThisExpr &expr) { emitBytes(OP_GET_LOCAL, 0); }
+	void Compiler::visitThis(ThisExpr &expr) {
+		track(expr.keyword);
+		emitBytes(OP_GET_LOCAL, 0);
+	}
 	void Compiler::visitGet(GetExpr &expr) {
+		track(expr.name);
 		compileExpression(expr.object);
 		emitBytes(OP_GET_PROPERTY, (uint8_t) makeConstant(RyValue(expr.name.lexeme)));
 	}
 	void Compiler::visitSet(SetExpr &expr) {
+		track(expr.name);
 		compileExpression(expr.object);
 		compileExpression(expr.value);
 		emitBytes(OP_SET_PROPERTY, (uint8_t) makeConstant(RyValue(expr.name.lexeme)));
 	}
 	void Compiler::visitFunctionStmt(FunctionStmt &stmt) {
-		// Setup the new function object
+		track(stmt.name);
+		std::vector<Local> savedLocals = this->locals;
+		int savedScopeDepth = this->scopeDepth;
+
+		this->locals.clear();
+		this->scopeDepth = 0;
+
 		auto function = std::make_shared<Frontend::RyFunction>();
 		function->name = stmt.name.lexeme;
 		function->arity = stmt.parameters.size();
@@ -416,34 +469,32 @@ namespace RyRuntime {
 		Chunk *mainChunk = compilingChunk;
 		compilingChunk = &function->chunk;
 
-		// Compile the function's internal world
 		beginScope();
 		locals.push_back({Token(), 0, false});
 
 		for (const auto &param: stmt.parameters) {
 			addLocal(param.name);
 		}
+
 		for (const auto &bodyStmt: stmt.body) {
 			compileStatement(bodyStmt);
 		}
 
-		// Functions MUST end with their own return (implicitly null if not stated)
 		emitByte(OP_NULL);
 		emitByte(OP_RETURN);
 		endScope();
 
-		// Switch back to Main
 		compilingChunk = mainChunk;
 
-		// Push the function as a constant
-		emitConstant(RyValue(function));
+		this->locals = savedLocals;
+		this->scopeDepth = savedScopeDepth;
 
-		// Define it as a global with a NAME OPERAND
-		emitBytes(OP_DEFINE_GLOBAL, (uint8_t) makeConstant(RyValue(stmt.name.lexeme)));
+		emitConstant(RyValue(function));
+		std::string mangled = stmt.name.lexeme;
+		emitBytes(OP_DEFINE_GLOBAL, (uint8_t) makeConstant(RyValue(mangled)));
 	}
 	void Compiler::visitMap(MapExpr &expr) {
-		currentColumn = expr.braceToken.column;
-		currentLine = expr.braceToken.line;
+		track(expr.braceToken);
 
 		for (const auto &item: expr.items) {
 			// Compile the Key
@@ -456,34 +507,38 @@ namespace RyRuntime {
 		emitBytes(OP_BUILD_MAP, (uint8_t) expr.items.size());
 	}
 	void Compiler::visitIndexSet(IndexSetExpr &expr) {
+		track(expr.bracket);
 		compileExpression(expr.object);
 		compileExpression(expr.index);
 		compileExpression(expr.value);
 		emitByte(OP_SET_INDEX);
 	}
 	void Compiler::visitIndex(IndexExpr &expr) {
+		track(expr.bracket);
 		compileExpression(expr.object);
 		compileExpression(expr.index);
 		emitByte(OP_GET_INDEX);
 	}
 	void Compiler::visitBitwiseOr(BitwiseOrExpr &expr) {
+		track(expr.op_t);
 		compileExpression(expr.left);
 		compileExpression(expr.right);
 		emitByte(OP_BITWISE_OR);
 	}
 	void Compiler::visitBitwiseXor(BitwiseXorExpr &expr) {
+		track(expr.op_t);
 		compileExpression(expr.left);
 		compileExpression(expr.right);
 		emitByte(OP_BITWISE_XOR);
 	}
 	void Compiler::visitBitwiseAnd(BitwiseAndExpr &expr) {
+		track(expr.op_t);
 		compileExpression(expr.left);
 		compileExpression(expr.right);
 		emitByte(OP_BITWISE_AND);
 	}
 	void Compiler::visitPostfix(PostfixExpr &expr) {
-		currentColumn = expr.postfix.column;
-		currentLine = expr.postfix.line;
+		track(expr.postfix);
 
 		// Try to see if the left side is a variable
 		// Cast the 'left' Expr to a VariableExpr to get the name
@@ -518,13 +573,11 @@ namespace RyRuntime {
 				emitBytes(OP_SET_GLOBAL, (uint8_t) makeConstant(RyValue(var->name.lexeme)));
 			}
 
-			// Pop the result of the SET (leaving only the original copy)
-			emitByte(OP_POP);
-
 		} else {
 		}
 	}
 	void Compiler::visitShift(ShiftExpr &expr) {
+		track(expr.op_t);
 		compileExpression(expr.left);
 		compileExpression(expr.right);
 		if (expr.op_t.type == TokenType::LESS_LESS) {
@@ -534,6 +587,7 @@ namespace RyRuntime {
 		}
 	}
 	void Compiler::visitStopStmt(StopStmt &stmt) {
+		track(stmt.keyword);
 		if (loopStack.empty()) {
 			error(stmt.keyword, "Cannot use 'stop' outside of a loop.");
 			return;
@@ -560,6 +614,7 @@ namespace RyRuntime {
 		loopStack.back().breakJumps.push_back(compilingChunk->code.size() - 2);
 	}
 	void Compiler::visitSkipStmt(SkipStmt &stmt) {
+		track(stmt.keyword);
 		if (loopStack.empty()) {
 			error(stmt.keyword, "Cannot use 'skip' outside of a loop.");
 			return;
@@ -585,6 +640,7 @@ namespace RyRuntime {
 		emitByte(OP_IMPORT);
 	}
 	void Compiler::visitAliasStmt(AliasStmt &stmt) {
+		track(stmt.name);
 		// Evaluate the expression we are aliasing (e.g., Math.sqrt)
 		compileExpression(stmt.aliasExpr);
 
@@ -593,14 +649,21 @@ namespace RyRuntime {
 		emitBytes(OP_DEFINE_GLOBAL, constant);
 	}
 	void Compiler::visitNamespaceStmt(NamespaceStmt &stmt) {
+		track(stmt.name);
+		std::string lastNamespace = currentNamespace;
+		currentNamespace = stmt.name.lexeme;
+		// compile the body
 		for (const auto &s: stmt.body) {
 			compileStatement(s);
 		}
+		currentNamespace = lastNamespace;
 	}
 	void Compiler::visitEachStmt(EachStmt &stmt) {
-		compileExpression(stmt.collection); // Pushes Collection
-		emitConstant(RyValue(0.0)); // Pushes Index
+		track(stmt.id);
+		compileExpression(stmt.collection);
+		emitConstant(RyValue(0.0));
 
+		beginScope();
 		Token dummy;
 		addLocal(dummy); // Collection
 		addLocal(dummy); // Index
@@ -616,25 +679,21 @@ namespace RyRuntime {
 		int exitJump = emitJump(OP_FOR_EACH_NEXT);
 
 		beginScope();
-
-		// Register the variable name
-		addLocal(stmt.id);
+		addLocal(stmt.id); // Register variable name at a higher scope depth
 
 		compileStatement(stmt.body);
 
-		endScope();
+		endScope(); // This automatically emits OP_POP for variable name and cleans locals
 
 		emitLoop(loopStart);
 		patchJump(exitJump);
 
-		emitBytes(OP_POP, OP_POP); // Clean up the hidden Range and Index
-		locals.pop_back();
-		locals.pop_back();
+		endScope(); // This emits OP_POP, OP_POP for the Index and Collection
+
 
 		for (int location: loopStack.back().breakJumps) {
 			patchJump(location);
 		}
-
 		loopStack.pop_back();
 	}
 	void Compiler::visitAttemptStmt(AttemptStmt &stmt) {

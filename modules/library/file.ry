@@ -1,6 +1,5 @@
 # file.ry
-alias use("libry_file.so") as native
-
+data native = use("libry_file.so")
 namespace File {
     func read(data path) {
         data result = native.read(path) 

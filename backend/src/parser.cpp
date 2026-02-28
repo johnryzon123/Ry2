@@ -15,6 +15,8 @@
 
 using namespace Backend;
 
+std::set<std::string> Parser::namespaces;
+
 std::vector<std::shared_ptr<Stmt>> Parser::parse() {
 	std::vector<std::shared_ptr<Stmt>> statements;
 
@@ -333,7 +335,21 @@ std::shared_ptr<Expr> Parser::postfixed() {
 			expr = std::make_shared<IndexExpr>(std::move(expr), std::move(index), bracket);
 		} else if (match({TokenType::DOT})) {
 			Token name = consume(TokenType::IDENTIFIER, "Expect property name after '.'.");
-			expr = std::make_shared<GetExpr>(expr, name);
+
+			if (auto var = std::dynamic_pointer_cast<VariableExpr>(expr)) {
+				if (namespaces.count(var->name.lexeme) > 0) {
+					std::string mangledName = var->name.lexeme + "::" + name.lexeme;
+					Token mangledToken = var->name;
+					mangledToken.lexeme = mangledName;
+					mangledToken.line = var->name.line;
+					mangledToken.column = var->name.column;
+					expr = std::make_shared<VariableExpr>(mangledToken);
+				} else {
+					expr = std::make_shared<GetExpr>(expr, name);
+				}
+			} else {
+				expr = std::make_shared<GetExpr>(expr, name);
+			}
 		} else if (match({TokenType::PLUS_PLUS, TokenType::MINUS_MINUS})) {
 			Token op = previous();
 			expr = std::make_shared<PostfixExpr>(op, std::move(expr));
@@ -430,6 +446,9 @@ std::shared_ptr<Stmt> Parser::declaration() {
 
 std::shared_ptr<FunctionStmt> Parser::functionDeclaration(const std::string &kind) {
 	Token name = consume(TokenType::IDENTIFIER, "Expect " + kind + " name.");
+	if (!currentNamespace.empty()) {
+		name.lexeme = currentNamespace + "::" + name.lexeme;
+	}
 	consume(TokenType::LPAREN, "Expect '(' before parameters");
 
 	std::vector<Parameter> parameters;
@@ -608,6 +627,9 @@ std::shared_ptr<VarStmt> Parser::typeDeclaration(std::optional<Token> prefix, bo
 	}
 
 	name = consume(TokenType::IDENTIFIER, "Expect variable name.");
+	if (!currentNamespace.empty()) {
+		name.lexeme = currentNamespace + "::" + name.lexeme;
+	}
 
 
 	if (match({TokenType::EQUAL})) {
@@ -709,8 +731,18 @@ std::shared_ptr<Stmt> Parser::untilStatement() {
 
 std::shared_ptr<Stmt> Parser::namespaceStatement() {
 	Token name = consume(TokenType::IDENTIFIER, "Expect namespace name.");
+
+	std::string previousNamespace = currentNamespace;
+	currentNamespace = (currentNamespace.empty()) ? name.lexeme : currentNamespace + "::" + name.lexeme;
+
+	namespaces.insert(name.lexeme);
+
 	consume(TokenType::LBRACE, "Expect '{' after namespace body.");
+
 	std::vector<std::shared_ptr<Stmt>> body = block();
+
+	currentNamespace = previousNamespace;
+
 	return std::make_shared<NamespaceStmt>(name, body);
 }
 

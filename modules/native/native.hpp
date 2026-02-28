@@ -1,12 +1,13 @@
 #pragma once
 #include <unordered_map>
 #include "native_io.hpp"
-#include "native_sys.hpp"
 #include "native_list.hpp"
+#include "native_sys.hpp"
 #include "native_type.hpp"
 #include "native_use.hpp"
 
 namespace RyRuntime {
+	inline std::vector<std::string> getNativeNames() { return {"out", "input", "clock", "clear", "exit", "type", "use"}; }
 	inline void registerNatives(std::unordered_map<std::string, RyValue> &globals) {
 		auto define = [&](std::string name, NativeFn fn, int arity) {
 			auto native = std::make_shared<Frontend::RyNative>(fn, name, arity);

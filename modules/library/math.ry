@@ -1,9 +1,9 @@
 # math.ry - A Ry Standard Library
 # "Ry's for You" - Feel free to modify these algorithms!
-
 namespace Math {
   data pi = 3.141592653589793
   data eps = 2.718281828459045
+  data last_seed = 0
 
   # Check if a number is even/odd using your new % operator
   func is_even(data n) {
@@ -56,7 +56,6 @@ namespace Math {
   }
   # Sine function using Taylor series
     func sin(data x) {
-        data pi = 3.141592653589793
         data pi2 = 6.283185307179586
         
         # Bring into circle range
@@ -144,5 +143,15 @@ namespace Math {
       data s = sin(x)
       if abs(s) < 0.000001 { return 0 }
       return 1 / s
+  }
+  # Random number
+  func rand(data max) {
+    data c = clock()
+    
+    last_seed = (last_seed + c + 1.1) * 123.456
+    
+    data result = last_seed % max
+    
+    return round(result)
   }
 }

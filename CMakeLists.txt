@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 project(Ry2)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
 
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native -flto -DNDEBUG")
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON) # Important for plugins
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

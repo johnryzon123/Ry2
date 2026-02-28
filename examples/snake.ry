@@ -1,4 +1,4 @@
-# Ry (Ry's for You) - Graphical Snake
+# Ry (Ry's for You) - Text based Snake
 data width = 10
 data height = 10
 data snake = [[5,5], [5,4]]
@@ -8,23 +8,27 @@ data food_idx = 0
 data food = food_spots[food_idx]
 
 data running = true
+data head = snake[0]
+data next = [head[0], head[1]]
+data is_snake = true
+data score = snake.len - 2
 
 while running {
     clear()
-    data score = len(snake) - 2
+    score = snake.len - 2
     out("--- Ry Snake | Score: " + score + " ---")
 
     # Render Grid
     foreach data y in 0 to height {
         data row = ""
         foreach data x in 0 to width {
-            data is_snake = false
+            is_snake = false
             foreach data seg in snake {
-                if seg == [x, y] { is_snake = true }
+                if seg[0] == x and seg[1] == y { is_snake = true }
             }
             
-            if is_snake { row = row + "🟢" }
-            else if [x, y] == food { row = row + "🍎" }
+            if is_snake { row = row + " 0 " }
+            else if food[0] == x and food[1] == y { row = row + " + " }
             else { row = row + " · " }
         }
         out(row)
@@ -35,8 +39,8 @@ while running {
     if move == "exit" { running = false } 
 
     # Calculate Physics
-    data head = snake[0]
-    data next = [head[0], head[1]]
+    head = snake[0]
+    next = [head[0], head[1]]
 
     if move == "w" { next = [head[0], head[1] - 1] }
     else if move == "s" { next = [head[0], head[1] + 1] }
@@ -44,23 +48,30 @@ while running {
     else if move == "d" { next = [head[0] + 1, head[1]] }
 
     # Collision Check (Self-Harm)
+    data hit_wall = false
+    if next[0] < 0 or next[0] >= width { hit_wall = true }
+    if next[1] < 0 or next[1] >= height { hit_wall = true }
     data hit_self = false
     foreach data seg in snake {
-        if seg == next { hit_self = true }
+        if seg[0] == next[0] and seg[1] == next[1] { hit_self = true }
     }
 
     if hit_self {
         out("GAME OVER! You ran into yourself!")
         running = false
+    } else if hit_wall {
+        out("GAME OVER! You ran into a wall!")
+        running = false
     } else {
         # Update Movement
         snake = [next] + snake
+        out("Next: ${next}")
 
-        if next == food {
-            food_idx = (food_idx + 1) % len(food_spots)
+        if next[0] == food[0] and next[1] == food[1] {
+            food_idx = (food_idx + 1) % food_spots.len
             food = food_spots[food_idx]
         } else {
-            pop(snake)
+            snake.pop()
         }
     }
 }

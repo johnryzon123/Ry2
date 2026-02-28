@@ -33,6 +33,8 @@ namespace Backend {
 		bool isTypeAlias(std::shared_ptr<Expr> expr);
 		Token previous();
 		Token consume(TokenType type, const std::string &message);
+		std::string currentNamespace = "";
+		static std::set<std::string> namespaces;
 		bool check(TokenType type);
 		[[nodiscard]] bool checkNext(TokenType type) const;
 		[[nodiscard]] bool isAtEnd() const;
