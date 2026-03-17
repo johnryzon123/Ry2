@@ -10,8 +10,6 @@
 #include "chunk.h"
 
 namespace Frontend {
-	
-
 	/*
 	 * Contains the data for functions
 	 */
@@ -21,8 +19,15 @@ namespace Frontend {
 		RyRuntime::Chunk chunk; // The data for the function
 		std::string name; // The name of the function
 		int upvalueCount = 0;
+		bool isStatic = false;
+		bool isOpen = false;
+		bool isAbstract = false;
+		bool isPrivate = false;
+		std::string ownerClassName;
 
-		RyFunction() : arity(0), name("") {} // Default Constructor for main
+		RyFunction() :
+				arity(0), name(""), isStatic(false), isOpen(false), isAbstract(false), isPrivate(false) {
+		} // Default Constructor for main
 
 		// Constructor for user made functions
 		RyFunction(RyRuntime::Chunk c, std::string n, int a) : chunk(std::move(c)), name(n), arity(a) {}
@@ -33,7 +38,7 @@ namespace Frontend {
 	 */
 	class RyNative {
 	public:
-		NativeFn function; // Contains the raw function
+		NativeFn function = nullptr; // Contains native function (core or module)
 		std::string name; // Contains the name
 		int arity; // Constains how much parameters it needs
 
@@ -41,6 +46,5 @@ namespace Frontend {
 
 		// Constructor for building native functions
 		RyNative(NativeFn fn, std::string n, int a) : function(fn), name(n), arity(a) {}
-		RyNative(NativeFn f, int a) : function(f), arity(a) {}
 	}; // class RyNative
 } // namespace Frontend

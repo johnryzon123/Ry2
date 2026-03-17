@@ -1,9 +1,10 @@
 #include "vm.h"
 #include <algorithm>
+#include <array>
+#include <cstdarg>
 #include <cstdio>
 #include <fstream>
 #include <set>
-#include <stdarg.h>
 #include "chunk.h"
 #include "class.h"
 #include "common.h"
@@ -16,8 +17,18 @@
 
 namespace RyRuntime {
 	static std::string vmSource;
-	void setVMSource(const std::string &source) { vmSource = source; }
-	int calculateDistance(const std::string &s1, const std::string &s2) {
+	static std::string lastReplBlockSource;
+	const uint64_t MAX_INSTRUCTIONS = 10000000000ULL; // 10 Billion (infinite loop detection)
+	void setVMSource(const std::string &source) {
+		// Heuristic to cache source code for function/class definitions in the REPL.
+		// This helps provide correct error reporting for functions defined over multiple REPL inputs.
+		if (source.find("func ") != std::string::npos || source.find("class ") != std::string::npos ||
+				source.find('{') != std::string::npos) {
+			lastReplBlockSource = source;
+		}
+		vmSource = source;
+	}
+	auto calculateDistance(const std::string &s1, const std::string &s2) -> int {
 		int n = s1.length();
 		int m = s2.length();
 
@@ -43,16 +54,7 @@ namespace RyRuntime {
 		return prev[m];
 	}
 
-	void VM::push(RyValue value) {
-		*stackTop = value;
-		stackTop++;
-	}
-
-	RyValue VM::pop() {
-		stackTop--;
-		return *stackTop;
-	}
-	std::shared_ptr<RyUpValue> VM::captureUpvalue(RyValue *local) {
+	auto VM::captureUpvalue(RyValue *local) -> std::shared_ptr<RyUpValue> {
 		std::shared_ptr<RyUpValue> prevUpvalue = nullptr;
 		std::shared_ptr<RyUpValue> upvalue = openUpvalues;
 
@@ -69,6 +71,12 @@ namespace RyRuntime {
 		createdUpvalue->location = local;
 		createdUpvalue->next = upvalue;
 
+		int regIndex = local - registers;
+		createdUpvalue->typeLocked = registerTypeLocked[regIndex];
+		if (createdUpvalue->typeLocked) {
+			createdUpvalue->typeName = registerTypeNames[regIndex];
+		}
+
 		if (prevUpvalue == nullptr) {
 			openUpvalues = createdUpvalue;
 		} else {
@@ -79,41 +87,56 @@ namespace RyRuntime {
 	}
 
 	VM::VM() {
-		resetStack();
+		frameCount = 0;
 		openUpvalues = nullptr;
+		registerTypeLocked.fill(false);
 		registerNatives(globals);
+		instruction_count = 0;
 	}
 
-	void VM::resetStack() {
-		stackTop = stack;
-		frameCount = 0;
-	}
 
 	// Helper for runtime errors to show line numbers
 	void VM::runtimeError(const char *format, ...) {
-		char buffer[1024];
+		std::array<char, 1024> buffer;
 		va_list args;
 		va_start(args, format);
-		vsnprintf(buffer, sizeof(buffer), format, args);
+		vsnprintf(buffer.data(), buffer.size(), format, args);
 		va_end(args);
+		last_error_message = buffer.data();
 
-		push(RyValue(std::string(buffer)));
+		// The error message is now placed in a known register (e.g., R0 of the top frame)
+		// For simplicity, we'll just handle it directly in the panic logic.
+		// This function now just prepares the message.
+		// A global error string could also be used.
 	}
 
-	InterpretResult VM::interpret(std::shared_ptr<Frontend::RyFunction> function) {
-		resetStack();
+	auto VM::interpret(std::shared_ptr<Frontend::RyFunction> function) -> InterpretResult {
+		// Reset the VM state for a fresh interpretation
+		// Clear registers to prevent state corruption between REPL inputs
+		for (int i = 0; i < 256; i++) {
+			registers[i] = RyValue();
+		}
+
+		closeUpvalues(0);
+		frameCount = 0;
+		panicStack.clear();
+		registerTypeLocked.fill(false);
+		registerTypeNames.fill("");
+		lastException = RyValue();
 
 		std::shared_ptr<RyClosure> closure = std::make_shared<RyClosure>(function);
-		push(RyValue(closure));
+		registers[0] = RyValue(closure);
 
 		CallFrame *frame = &frames[frameCount++];
 		frame->closure = closure;
 		frame->ip = function->chunk.code.data();
-		frame->slots = stack;
+		frame->reg_base = 0;
+
+		instruction_count = 0;
 
 		return run();
 	}
-	bool VM::isTruthy(RyValue value) {
+	auto VM::isTruthy(RyValue value) -> bool {
 		if (value.isNil())
 			return false;
 		if (value.isNumber())
@@ -122,14 +145,9 @@ namespace RyRuntime {
 			return value.asBool();
 		return true;
 	}
-	RyValue VM::peek(int distance) {
-		// stackTop points to the NEXT empty slot,
-		// so -1 is the current top, -2 is one below, etc.
-		return stackTop[-1 - distance];
-	}
 
-	void VM::closeUpvalues(RyValue *last) {
-		while (openUpvalues != nullptr && openUpvalues->location >= last) {
+	void VM::closeUpvalues(int last_reg_base) {
+		while (openUpvalues != nullptr && (openUpvalues->location - registers) >= last_reg_base) {
 			std::shared_ptr<RyUpValue> upvalue = openUpvalues;
 			upvalue->closed = *upvalue->location;
 			upvalue->location = &upvalue->closed;
@@ -138,873 +156,1180 @@ namespace RyRuntime {
 	}
 
 	InterpretResult VM::run() {
+// Direct threading setup
+#if defined(__GNUC__) || defined(__clang__)
+#define DIRECT_THREADING 1
+#else
+#define DIRECT_THREADING 0
+#endif
+
 #define FRAME (frames[frameCount - 1])
-#define READ_BYTE() (*FRAME.ip++)
-#define READ_CONSTANT() (FRAME.closure->function->chunk.constants[READ_BYTE()])
-#define READ_SHORT() (FRAME.ip += 2, (uint16_t) ((FRAME.ip[-2] << 8) | FRAME.ip[-1]))
-#define RY_PANIC(format, ...)                                                                                          \
-	{                                                                                                                    \
-		runtimeError(format, ##__VA_ARGS__);                                                                               \
-		push(RyValue(buffer));                                                                                             \
+#define CURRENT_CHUNK (FRAME.closure->function->chunk)
+#define CONSTANTS (CURRENT_CHUNK.constants)
+#define REG(i) (registers[FRAME.reg_base + (i)])
+
+#if DIRECT_THREADING
+		static const std::array<void *, 55> dispatch_table = {&&op_move,
+																													&&op_load_const,
+																													&&op_load_null,
+																													&&op_load_true,
+																													&&op_load_false,
+																													&&op_load_upvalue,
+																													&&op_set_upvalue,
+																													&&op_get_global,
+																													&&op_set_global,
+																													&&op_define_global,
+																													&&op_get_property,
+																													&&op_set_property,
+																													&&op_get_super,
+																													&&op_negate,
+																													&&op_not, // Logical not
+																													&&op_add,
+																													&&op_subtract,
+																													&&op_multiply,
+																													&&op_divide,
+																													&&op_modulo,
+																													&&op_bitwise_or,
+																													&&op_bitwise_xor,
+																													&&op_bitwise_and,
+																													&&op_left_shift,
+																													&&op_right_shift,
+																													&&op_equal,
+																													&&op_greater,
+																													&&op_less,
+																													&&op_jump,
+																													&&op_jump_if_false,
+																													&&op_loop,
+																													&&op_call,
+																													&&op_closure,
+																													&&op_return,
+																													&&op_build_list,
+																													&&op_build_map,
+																													&&op_build_range_list,
+																													&&op_get_index,
+																													&&op_set_index,
+																													&&op_close_upvalue,
+																													&&op_assign_local,
+																													&&op_type_lock,
+																													&&op_type_unlock,
+																													&&op_class,
+																													&&op_method,
+																													&&op_inherit,
+																													&&op_verify_abstract,
+																													&&op_define_private_field,
+																													&&op_panic,
+																													&&op_import,
+																													&&op_for_each_next,
+																													&&op_pop,
+																													&&op_attempt,
+																													&&op_end_attempt,
+																													&&op_load_exception};
+
+#define START_OPCODE(name) op_##name
+#define READ_AND_DISPATCH()                                                                                            \
+	if (++instruction_count > MAX_INSTRUCTIONS) {                                                                        \
+		runtimeError("Potential infinite loop detected (exceeded 10 billion instructions).");                              \
 		goto trigger_panic;                                                                                                \
-	}
+	}                                                                                                                    \
+	instruction = *FRAME.ip++;                                                                                           \
+	goto *dispatch_table[instruction.opcode]
+#else
+#define START_OPCODE(name) case OP_##name
+#define READ_AND_DISPATCH()                                                                                            \
+	if (++instruction_count > MAX_INSTRUCTIONS) {                                                                        \
+		runtimeError("Potential infinite loop detected (exceeded 10 nillion instructions).");                              \
+		goto trigger_panic;                                                                                                \
+	}                                                                                                                    \
+	instruction = *FRAME.ip++;                                                                                           \
+	goto switch_start
+#endif
 
+		Instruction instruction;
+		READ_AND_DISPATCH();
+
+#if !DIRECT_THREADING
 		for (;;) {
-			// Debug: Print stack height
-			/*std::cout << "--- STACK DEBUG (Height: " << (stackTop - stack) << ") ---" << std::endl;
-			for (RyValue *slot = stack; slot < stackTop; slot++) {
-				std::cout << "[" << (slot - stack) << "]" << " Value: " << slot->to_string();
-			}
-			std::cout << "\nStack height: " << (long) (stackTop - stack) << " Frames: " << frames << std::endl;
-			std::cout << "--------------------------" << std::endl;
-			*/
-			if (stackTop < stack) {
-				runtimeError("Stack Underflow! Pointer: %p, Base: %p", stackTop, stack);
-				goto trigger_panic;
-			}
-			if (stackTop >= stack + STACK_MAX) {
-				runtimeError("Stack Overflow!");
-				goto trigger_panic;
-			}
+		switch_start:
+			switch (instruction.opcode) {
+#endif
+				START_OPCODE(move) : {
+					REG(instruction.p1) = REG(instruction.p2);
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(load_const) : {
+					REG(instruction.p1) = CONSTANTS[instruction.p2p3()];
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(load_null) : {
+					REG(instruction.p1) = RyValue();
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(load_true) : {
+					REG(instruction.p1) = RyValue(true);
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(load_false) : {
+					REG(instruction.p1) = RyValue(false);
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(negate) : {
+					REG(instruction.p1) = -REG(instruction.p2);
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(not ) : {
+					REG(instruction.p1) = !REG(instruction.p2);
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(load_upvalue) : {
+					REG(instruction.p1) = *FRAME.closure->upvalues[instruction.p2]->location;
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(set_upvalue) : {
+					{
+						auto upvalue = FRAME.closure->upvalues[instruction.p2];
+						RyValue &newVal = REG(instruction.p1);
 
-			uint8_t instruction;
-			switch (instruction = READ_BYTE()) {
-				case OP_POP: {
-					pop();
-					break;
+						if (upvalue->typeLocked) {
+							std::string &lockedType = upvalue->typeName;
+							std::string newType = newVal.typeName();
+							if (lockedType != newType && !newVal.isNil()) {
+								runtimeError("TypeError: This captured variable has a locked type of '%s' and cannot be reassigned to "
+														 "a value of type '%s'.",
+														 lockedType.c_str(), newType.c_str());
+								goto trigger_panic;
+							}
+						} else if (!newVal.isNil()) {
+							// First assignment, so lock the type.
+							upvalue->typeName = newVal.typeName();
+							upvalue->typeLocked = true;
+						}
+						*upvalue->location = newVal;
+					}
+					READ_AND_DISPATCH();
 				}
-				case OP_NULL: {
-					push(RyValue());
-					break;
-				}
-				case OP_TRUE: {
-					push(RyValue(true));
-					break;
-				}
-				case OP_FALSE: {
-					push(RyValue(false));
-					break;
+				START_OPCODE(closure) : {
+					{
+						auto function = CONSTANTS[instruction.p2p3()].asFunction();
+						auto closure = std::make_shared<RyClosure>(function);
+						REG(instruction.p1) = RyValue(closure);
+						for (int i = 0; i < function->upvalueCount; ++i) {
+							Instruction next = *FRAME.ip++;
+							bool isLocal = next.p1;
+							uint8_t index = next.p2;
+							closure->upvalues[i] = isLocal ? captureUpvalue(&REG(index)) : FRAME.closure->upvalues[index];
+						}
+					}
+					READ_AND_DISPATCH();
 				}
 
-				case OP_CONSTANT: {
-					push(READ_CONSTANT());
-					break;
-				}
-				case OP_ADD: {
-					RyValue b = pop();
-					RyValue a = pop();
+				START_OPCODE(add) : {
+					{
+						RyValue &a = REG(instruction.p2);
+						RyValue &b = REG(instruction.p3);
 
-					if (a.isList()) {
-						auto newList = std::make_shared<std::vector<RyValue>>(*a.asList());
-
-						if (b.isList()) {
-							auto bList = b.asList();
-							newList->insert(newList->end(), bList->begin(), bList->end());
+						if (a.isList()) {
+							if (b.isList()) {
+								auto newList = std::make_shared<std::vector<RyValue>>(*a.asList());
+								auto bList = b.asList();
+								newList->insert(newList->end(), bList->begin(), bList->end());
+								REG(instruction.p1) = RyValue(newList);
+							} else {
+								runtimeError("TypeError: Can only concatenate list with list, not with '%s'.", b.typeName().c_str());
+								goto trigger_panic;
+							}
+						} else if (a.isString() || b.isString()) {
+							REG(instruction.p1) = RyValue(a.to_string() + b.to_string());
+						} else if (a.isNumber() && b.isNumber()) {
+							REG(instruction.p1) = RyValue(a.asNumber() + b.asNumber());
+						} else if (a.isChar() && b.isChar()) {
+							REG(instruction.p1) = RyValue(static_cast<double>(a.asChar() + b.asChar()));
+						} else if (a.isChar() && b.isNumber()) {
+							REG(instruction.p1) = RyValue(static_cast<char>(a.asChar() + b.asNumber()));
+						} else if (a.isNumber() && b.isChar()) {
+							REG(instruction.p1) = RyValue(static_cast<char>(a.asNumber() + b.asChar()));
 						} else {
-							newList->push_back(b);
+							runtimeError("TypeError: Unsupported operand types for +: '%s' and '%s'.", a.typeName().c_str(),
+													 b.typeName().c_str());
+							goto trigger_panic;
 						}
-						push(RyValue(newList));
-					} else if (a.isNumber() && b.isNumber()) {
-						push(RyValue(a.asNumber() + b.asNumber()));
-					} else if (a.isString() || b.isString()) {
-						push(RyValue(a.to_string() + b.to_string()));
-					} else {
-						runtimeError("Operands must be numbers, strings, or lists.");
-						goto trigger_panic;
 					}
-					break;
+					READ_AND_DISPATCH();
 				}
-				case OP_SUBTRACT: {
-					RyValue b = pop();
-					RyValue a = pop();
-
-					if (a.isNumber() && b.isNumber()) {
-						push(RyValue(a.asNumber() - b.asNumber()));
-					} else {
-						runtimeError("Operands must be numbers");
-						goto trigger_panic;
-					}
-					break;
-				}
-				case OP_MULTIPLY: {
-					RyValue b = pop();
-					RyValue a = pop();
-
-					if (a.isList()) {
-						auto newList = std::make_shared<std::vector<RyValue>>(*a.asList());
-
-						if (b.isList()) {
-							auto bList = b.asList();
-							newList->insert(newList->end(), bList->begin(), bList->end());
+				START_OPCODE(subtract) : {
+					{
+						RyValue &a = REG(instruction.p2);
+						RyValue &b = REG(instruction.p3);
+						if (a.isNumber() && b.isNumber()) {
+							REG(instruction.p1) = RyValue(a.asNumber() - b.asNumber());
+						} else if (a.isChar() && b.isChar()) {
+							REG(instruction.p1) = RyValue(static_cast<double>(a.asChar() - b.asChar()));
+						} else if (a.isChar() && b.isNumber()) {
+							REG(instruction.p1) = RyValue(static_cast<char>(a.asChar() - b.asNumber()));
 						} else {
-							newList->push_back(b);
+							runtimeError("TypeError: Unsupported operand types for -: '%s' and '%s'.", a.typeName().c_str(),
+													 b.typeName().c_str());
+							goto trigger_panic;
 						}
-						push(RyValue(newList));
-					} else if (a.isNumber() && b.isNumber()) {
-						push(RyValue(a.asNumber() * b.asNumber()));
-					} else if (a.isNumber() && b.isString()) {
-						std::string result;
-						result.reserve(a.asNumber() * b.to_string().length());
-						for (size_t i = 0; i < a.asNumber(); ++i) {
-							result += b.to_string();
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(multiply) : {
+					REG(instruction.p1) = REG(instruction.p2) * REG(instruction.p3);
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(divide) : {
+					{
+						RyValue &b = REG(instruction.p3);
+						if (b.asNumber() == 0) {
+							runtimeError("ZeroDivisionError: Division by zero.");
+							goto trigger_panic;
 						}
-						push(RyValue(result));
-					} else if (a.isString() && b.isNumber()) {
-						std::string result;
-						result.reserve(b.asNumber() * a.to_string().length());
-						for (size_t i = 0; i < b.asNumber(); ++i) {
-							result += a.to_string();
+						REG(instruction.p1) = REG(instruction.p2) / REG(instruction.p3);
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(equal) : {
+					{
+						RyValue &a = REG(instruction.p2);
+						RyValue &b = REG(instruction.p3);
+						if (a.isChar() && b.isChar()) {
+							REG(instruction.p1) = RyValue(a.asChar() == b.asChar());
+						} else {
+							REG(instruction.p1) = (a == b);
 						}
-						push(RyValue(result));
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(greater) : {
+					{
+						RyValue &a = REG(instruction.p2);
+						RyValue &b = REG(instruction.p3);
+						if (a.isChar() && b.isChar()) {
+							REG(instruction.p1) = RyValue(a.asChar() > b.asChar());
+						} else {
+							REG(instruction.p1) = (a > b);
+						}
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(less) : {
+					RyValue &a = REG(instruction.p2);
+					RyValue &b = REG(instruction.p3);
+					if (a.isChar() && b.isChar()) {
+						{
+							REG(instruction.p1) = RyValue(a.asChar() < b.asChar());
+						}
 					} else {
-						runtimeError("Operands must be numbers, strings, or lists.");
-						goto trigger_panic;
+						REG(instruction.p1) = (a < b);
 					}
-					break;
+					READ_AND_DISPATCH();
 				}
-				case OP_DIVIDE: {
-					RyValue b = pop();
-					RyValue a = pop();
-
-					if (b.asNumber() == 0) {
-						// Option A: Trigger a Ry Panic (Catchable by 'attempt')
-						push(RyValue("Division by zero")); // Push error message
-						// Redirect to the OP_PANIC logic
-						goto trigger_panic;
-					}
-
-					push(a / b);
-					break;
+				START_OPCODE(modulo) : {
+					REG(instruction.p1) = REG(instruction.p2) % REG(instruction.p3);
+					READ_AND_DISPATCH();
 				}
-				case OP_NEGATE: {
-					push(-pop());
-					break;
+				START_OPCODE(bitwise_and) : {
+					long a = (long) REG(instruction.p2).asNumber();
+					long b = (long) REG(instruction.p3).asNumber();
+					REG(instruction.p1) = RyValue((double) (a & b));
+					READ_AND_DISPATCH();
 				}
-				case OP_NOT: {
-					push(!pop());
-					break;
+				START_OPCODE(bitwise_or) : {
+					long a = (long) REG(instruction.p2).asNumber();
+					long b = (long) REG(instruction.p3).asNumber();
+					REG(instruction.p1) = RyValue((double) (a | b));
+					READ_AND_DISPATCH();
 				}
-				case OP_EQUAL: {
-					RyValue b = pop();
-					RyValue a = pop();
-					push(a == b);
-					break;
+				START_OPCODE(bitwise_xor) : {
+					long a = (long) REG(instruction.p2).asNumber();
+					long b = (long) REG(instruction.p3).asNumber();
+					REG(instruction.p1) = RyValue((double) (a ^ b));
+					READ_AND_DISPATCH();
 				}
-				case OP_GREATER: {
-					RyValue b = pop();
-					RyValue a = pop();
-					push(a > b);
-					break;
+				START_OPCODE(left_shift) : {
+					long a = (long) REG(instruction.p2).asNumber();
+					long b = (long) REG(instruction.p3).asNumber();
+					REG(instruction.p1) = RyValue((double) (a << b));
+					READ_AND_DISPATCH();
 				}
-				case OP_LESS: {
-					RyValue b = pop();
-					RyValue a = pop();
-					push(a < b);
-					break;
+				START_OPCODE(right_shift) : {
+					long a = (long) REG(instruction.p2).asNumber();
+					long b = (long) REG(instruction.p3).asNumber();
+					REG(instruction.p1) = RyValue((double) (a >> b));
+					READ_AND_DISPATCH();
 				}
-				case OP_MODULO: {
-					RyValue b = pop();
-					RyValue a = pop();
-					push(a % b);
-					break;
+				START_OPCODE(pop) : {
+					// No-op in register VM, used for side-effects in expression statements
+					// or to keep instruction alignment if needed.
+					READ_AND_DISPATCH();
 				}
-				case OP_GET_LOCAL: {
-					uint8_t slot = READ_BYTE();
-					push(FRAME.slots[slot]);
-					break;
-				}
-				case OP_SET_LOCAL: {
-					uint8_t slot = READ_BYTE();
-					// Debug: FRAME.slots[slot] = *(stackTop - 1);
-					FRAME.slots[slot] = pop();
-					break;
-				}
-				case OP_JUMP: {
-					uint16_t offset = READ_SHORT();
+				START_OPCODE(jump) : {
+					uint16_t offset = instruction.p2p3();
 					FRAME.ip += offset;
-					break;
+					READ_AND_DISPATCH();
 				}
-				case OP_JUMP_IF_FALSE: {
-					uint16_t offset = READ_SHORT();
-					if (!isTruthy(peek(0))) {
+				START_OPCODE(jump_if_false) : {
+					uint16_t offset = instruction.p2p3();
+					if (!isTruthy(REG(instruction.p1))) {
 						FRAME.ip += offset;
 					}
-					break;
+					READ_AND_DISPATCH();
 				}
-				case OP_LOOP: {
-					uint16_t offset = READ_SHORT();
+				START_OPCODE(loop) : {
+					uint16_t offset = instruction.p2p3();
 					FRAME.ip -= offset;
-					break;
+					READ_AND_DISPATCH();
 				}
-				case OP_DEFINE_GLOBAL: {
-					RyValue name = READ_CONSTANT();
-					globals[name.to_string()] = pop();
-					break;
+				START_OPCODE(define_global) : {
+					{
+						std::string name = CONSTANTS[instruction.p2p3()].to_string();
+						RyValue &val = REG(instruction.p1);
+						globals[name] = val;
+						if (!val.isNil()) {
+							globalTypes[name] = val.typeName();
+						}
+					}
+					READ_AND_DISPATCH();
 				}
-				case OP_GET_GLOBAL: {
-					RyValue nameValue = READ_CONSTANT();
-					std::string name = nameValue.to_string();
-					auto it = globals.find(name);
+				START_OPCODE(get_global) : {
+					{
+						RyValue nameValue = CONSTANTS[instruction.p2p3()];
+						std::string name = nameValue.to_string();
+						auto it = globals.find(name);
 
-					if (it == globals.end()) {
-						std::string bestMatch = "";
-						int minDistance = 3;
-
-						for (auto const &[key, val]: globals) {
-							int dist = calculateDistance(name, key);
-							if (dist < minDistance) {
-								minDistance = dist;
-								bestMatch = key;
+						// If not found, try to resolve in the current namespace
+						if (it == globals.end()) {
+							std::string current_func_name = FRAME.closure->function->name;
+							auto pos = current_func_name.rfind("::");
+							if (pos != std::string::npos) {
+								std::string ns = current_func_name.substr(0, pos);
+								std::string new_name = ns + "::" + name;
+								it = globals.find(new_name);
 							}
 						}
 
-						if (!bestMatch.empty()) {
-							runtimeError("Undefined variable '%s'. Did you mean '%s'?", name.c_str(), bestMatch.c_str());
-						} else {
-							runtimeError("Undefined variable '%s'.", name.c_str());
+						if (it == globals.end()) {
+							std::string bestMatch = "";
+							int minDistance = 3;
+
+							for (auto const &[key, val]: globals) {
+								int dist = calculateDistance(name, key);
+								if (dist < minDistance) {
+									minDistance = dist;
+									bestMatch = key;
+								}
+							}
+
+							if (!bestMatch.empty()) {
+								runtimeError("NameError: Undefined variable '%s'. Did you mean '%s'?", name.c_str(), bestMatch.c_str());
+							} else {
+								runtimeError("NameError: Undefined variable '%s'.", name.c_str());
+							}
+
+							goto trigger_panic;
 						}
-
-						goto trigger_panic;
+						REG(instruction.p1) = it->second;
 					}
-					push(it->second);
-					break;
+					READ_AND_DISPATCH();
 				}
-				case OP_SET_GLOBAL: {
-					RyValue nameValue = READ_CONSTANT();
-					std::string name = nameValue.to_string();
-					auto it = globals.find(name);
+				START_OPCODE(set_global) : {
+					{
+						RyValue nameValue = CONSTANTS[instruction.p2p3()];
+						std::string name = nameValue.to_string();
+						auto it = globals.find(name);
 
-					if (it == globals.end()) {
-						std::string bestMatch = "";
-						int minDistance = 3;
-
-						for (auto const &[key, val]: globals) {
-							int dist = calculateDistance(name, key);
-							if (dist < minDistance) {
-								minDistance = dist;
-								bestMatch = key;
+						// If not found, try to resolve in the current namespace
+						if (it == globals.end()) {
+							std::string current_func_name = FRAME.closure->function->name;
+							auto pos = current_func_name.rfind("::");
+							if (pos != std::string::npos) {
+								std::string ns = current_func_name.substr(0, pos);
+								std::string new_name = ns + "::" + name;
+								it = globals.find(new_name);
 							}
 						}
 
-						if (!bestMatch.empty()) {
-							runtimeError("Cannot set undefined variable '%s'. Did you mean '%s'?", name.c_str(), bestMatch.c_str());
-						} else {
-							runtimeError("Undefined variable '%s'.", name.c_str());
+						if (it == globals.end()) {
+							std::string bestMatch = "";
+							int minDistance = 3;
+
+							for (auto const &[key, val]: globals) {
+								int dist = calculateDistance(name, key);
+								if (dist < minDistance) {
+									minDistance = dist;
+									bestMatch = key;
+								}
+							}
+
+							if (!bestMatch.empty()) {
+								runtimeError("NameError: Cannot set undefined variable '%s'. Did you mean '%s'?", name.c_str(),
+														 bestMatch.c_str());
+							} else {
+								runtimeError("NameError: Undefined variable '%s'.", name.c_str());
+							}
+
+							goto trigger_panic;
 						}
 
-						goto trigger_panic;
-					}
+						RyValue &val = REG(instruction.p1);
+						auto type_it = globalTypes.find(name);
 
-					// D it->second = *(stackTop - 1);
-					it->second = pop();
-					break;
+						if (type_it == globalTypes.end()) {
+							// First assignment to a variable declared without a value.
+							if (!val.isNil()) {
+								globalTypes[name] = val.typeName();
+							}
+						} else {
+							// This variable has a type, check for mismatch.
+							std::string &lockedType = type_it->second;
+							std::string newType = val.typeName();
+							if (lockedType != newType && !val.isNil()) {
+								runtimeError("TypeError: Global variable '%s' has a locked type of '%s' and cannot be reassigned to a "
+														 "value of type '%s'.",
+														 name.c_str(), lockedType.c_str(), newType.c_str());
+								goto trigger_panic;
+							}
+						}
+						it->second = val;
+					}
+					READ_AND_DISPATCH();
 				}
-				case OP_PANIC: {
-				trigger_panic:
-					RyValue message = pop();
-					std::string output = message.isNil() ? "Unknown Panic" : message.to_string();
+				START_OPCODE(get_property) : {
+					{
+						RyValue obj = REG(instruction.p2);
+						std::string name = CONSTANTS[instruction.p3].to_string();
+						bool found = false;
+
+						if (obj.isInstance()) {
+							auto instance = obj.asInstance();
+							if (instance->klass->privateFields.count(name)) {
+								std::string &caller = FRAME.closure->function->ownerClassName;
+								if (caller != instance->klass->name) {
+									runtimeError("AccessError: Private field '%s' cannot be accessed from outside class '%s'.",
+															 name.c_str(), instance->klass->name.c_str());
+									goto trigger_panic;
+								}
+							}
+
+							if (instance->fields.count(name)) {
+								REG(instruction.p1) = instance->fields[name];
+								found = true;
+							} else {
+								// Field & Method lookup in class chain
+								auto klass = instance->klass;
+								while (klass) {
+									if (klass->fields.count(name)) {
+										REG(instruction.p1) = klass->fields[name];
+										found = true;
+										break;
+									}
+									if (klass->methods.count(name)) {
+										auto method = klass->methods[name];
+										auto bound = std::make_shared<Frontend::RyBoundMethod>(obj, method);
+										REG(instruction.p1) = RyValue(bound);
+										found = true;
+										break;
+									}
+									klass = klass->superclass;
+								}
+							}
+						} else if (obj.isClass()) {
+							auto klass = obj.asClass();
+							if (klass->privateFields.count(name)) {
+								std::string &caller = FRAME.closure->function->ownerClassName;
+								if (caller != klass->name) {
+									runtimeError("AccessError: Private field '%s' cannot be accessed from outside class '%s'.",
+															 name.c_str(), klass->name.c_str());
+									goto trigger_panic;
+								}
+							}
+
+							if (klass->fields.count(name)) {
+								REG(instruction.p1) = klass->fields[name];
+								found = true;
+							} else if (klass->methods.count(name)) {
+								auto bound = std::make_shared<Frontend::RyBoundMethod>(obj, klass->methods[name]);
+								REG(instruction.p1) = RyValue(bound);
+								found = true;
+							}
+						} else if (obj.isMap()) {
+							auto map = obj.asMap();
+							RyValue key(name);
+							if (map->count(key)) {
+								REG(instruction.p1) = (*map)[key];
+								found = true;
+							} else {
+								auto map = obj.asMap();
+								RyValue key(name);
+								if (map->count(key)) {
+									REG(instruction.p1) = (*map)[key];
+									found = true;
+								}
+							}
+						} else if (obj.isList()) {
+							if (name == "len") {
+								REG(instruction.p1) = RyValue((double) obj.asList()->size());
+								found = true;
+							}
+						} else if (obj.isString()) {
+							if (name == "len") {
+								REG(instruction.p1) = RyValue((double) obj.asString().length());
+								found = true;
+							}
+						}
+
+						if (!found) {
+							runtimeError("AttributeError: Undefined property '%s' on object of type '%s'.", name.c_str(),
+													 obj.typeName().c_str());
+							goto trigger_panic;
+						}
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(set_property) : {
+					{
+						RyValue obj = REG(instruction.p1);
+						std::string name = CONSTANTS[instruction.p2].to_string();
+						RyValue val = REG(instruction.p3);
+
+						if (obj.isInstance()) {
+							auto instance = obj.asInstance();
+							if (instance->klass->privateFields.count(name)) {
+								std::string &caller = FRAME.closure->function->ownerClassName;
+								if (caller != instance->klass->name) {
+									runtimeError("AccessError: Private field '%s' cannot be accessed from outside class '%s'.",
+															 name.c_str(), instance->klass->name.c_str());
+									goto trigger_panic;
+								}
+							}
+							obj.asInstance()->fields[name] = val;
+						} else if (obj.isClass()) {
+							auto klass = obj.asClass();
+							if (klass->privateFields.count(name)) {
+								std::string &caller = FRAME.closure->function->ownerClassName;
+								if (caller != klass->name) {
+									runtimeError("AccessError: Private field '%s' cannot be accessed from outside class '%s'.",
+															 name.c_str(), klass->name.c_str());
+									goto trigger_panic;
+								}
+							}
+							klass->fields[name] = val;
+						} else if (obj.isMap()) {
+							(*obj.asMap())[RyValue(name)] = val;
+						} else {
+							runtimeError("AttributeError: Cannot set properties on type '%s'. Only instances, classes, and maps are "
+													 "mutable.",
+													 obj.typeName().c_str());
+							goto trigger_panic;
+						}
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(get_super) : {
+					{
+						RyValue instance = REG(instruction.p2);
+						std::string name = CONSTANTS[instruction.p3].to_string();
+						bool found = false;
+						if (instance.isInstance()) {
+							auto superclass = instance.asInstance()->klass->superclass;
+							if (superclass) {
+								auto klass = superclass;
+								while (klass) {
+									if (klass->methods.count(name)) {
+										auto bound = std::make_shared<Frontend::RyBoundMethod>(instance, klass->methods[name]);
+										REG(instruction.p1) = RyValue(bound);
+										found = true;
+										break;
+									}
+									klass = klass->superclass;
+								}
+							}
+						}
+						if (!found) {
+							runtimeError("AttributeError: Undefined property '%s' in superclass.", name.c_str());
+							goto trigger_panic;
+						}
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(build_list) : {
+					{
+						int start = instruction.p2;
+						int count = instruction.p3;
+						auto list = std::make_shared<std::vector<RyValue>>();
+						list->reserve(count);
+						for (int i = 0; i < count; ++i) {
+							list->emplace_back(REG(start + i));
+						}
+						REG(instruction.p1) = RyValue(list);
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(build_map) : {
+					{
+						int start = instruction.p2;
+						int count = instruction.p3;
+						auto map = std::make_shared<std::map<RyValue, RyValue>>();
+						for (int i = 0; i < count; ++i) {
+							RyValue key = REG(start + i * 2);
+							RyValue val = REG(start + i * 2 + 1);
+							(*map)[key] = val;
+						}
+						REG(instruction.p1) = RyValue(map);
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(build_range_list) : {
+					{
+						RyValue startVal = REG(instruction.p2);
+						RyValue endVal = REG(instruction.p3);
+
+						if (startVal.isNil() || endVal.isNil()) {
+							runtimeError("Range operands cannot be null.");
+							goto trigger_panic;
+						}
+
+						REG(instruction.p1) = RyValue(RyRange{startVal.asNumber(), endVal.asNumber()});
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(get_index) : {
+					{
+						RyValue obj = REG(instruction.p2);
+						RyValue idx = REG(instruction.p3);
+
+						if (obj.isList()) {
+							if (!idx.isNumber()) {
+								runtimeError("TypeError: List index must be a number.");
+								goto trigger_panic;
+							}
+							auto list = obj.asList();
+							int i = (int) idx.asNumber();
+							if (i < 0 || i >= (int) list->size()) {
+								runtimeError("IndexError: List index out of bounds.");
+								goto trigger_panic;
+							}
+							REG(instruction.p1) = (*list)[i];
+						} else if (obj.isMap()) {
+							auto map = obj.asMap();
+							if (map->find(idx) == map->end()) {
+								REG(instruction.p1) = RyValue(); // Return null if not found
+							} else {
+								REG(instruction.p1) = (*map)[idx];
+							}
+						} else if (obj.isString()) {
+							// String indexing: return single character as string
+							if (!idx.isNumber()) {
+								runtimeError("TypeError: String index must be a number.");
+								goto trigger_panic;
+							}
+							std::string s = obj.asString();
+							int i = (int) idx.asNumber();
+							if (i < 0 || i >= (int) s.length()) {
+								runtimeError("IndexError: String index out of bounds.");
+								goto trigger_panic;
+							}
+							REG(instruction.p1) = RyValue(s[i]);
+						} else {
+							runtimeError("TypeError: Type '%s' is not subscriptable.", obj.typeName().c_str());
+							goto trigger_panic;
+						}
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(set_index) : {
+					{
+						RyValue obj = REG(instruction.p1);
+						RyValue idx = REG(instruction.p2);
+						RyValue val = REG(instruction.p3);
+
+						if (obj.isList()) {
+							if (!idx.isNumber()) {
+								runtimeError("TypeError: List index must be a number.");
+								goto trigger_panic;
+							}
+							auto list = obj.asList();
+							int i = (int) idx.asNumber();
+							if (i < 0 || i >= (int) list->size()) {
+								runtimeError("IndexError: List index out of bounds.");
+								goto trigger_panic;
+							}
+							(*list)[i] = val;
+						} else if (obj.isMap()) {
+							(*obj.asMap())[idx] = val;
+						} else if (obj.isString()) {
+							runtimeError("TypeError: Strings are immutable and do not support item assignment.");
+							goto trigger_panic;
+						} else {
+							runtimeError("TypeError: Type '%s' does not support item assignment.", obj.typeName().c_str());
+							goto trigger_panic;
+						}
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(import) : {
+					{
+						RyValue fileNameVal = REG(instruction.p2); // p1=dest, p2=path_reg
+						if (!fileNameVal.isString()) {
+							runtimeError("Import path must be a string.");
+							goto trigger_panic;
+						}
+						std::string fileName = RyTools::findModulePath(fileNameVal.to_string(), false);
+
+						if (moduleCache.count(fileName)) {
+							REG(instruction.p1) = RyValue(moduleCache[fileName]);
+						} else {
+							std::ifstream file(fileName);
+							if (!file.is_open()) {
+								runtimeError("Could not open module '%s'.", fileName.c_str());
+								goto trigger_panic;
+							}
+							std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+							// Compile module
+							Backend::Lexer lexer(source);
+							auto tokens = lexer.scanTokens();
+							std::set<std::string> aliases;
+							Backend::Parser parser(tokens, aliases, source);
+							auto stmts = parser.parse();
+
+							RyRuntime::Compiler compiler(nullptr, source);
+							Chunk chunk;
+							if (!compiler.compile(stmts, &chunk)) {
+								runtimeError("Failed to compile module '%s'.", fileName.c_str());
+								goto trigger_panic;
+							}
+
+							auto function = std::make_shared<Frontend::RyFunction>(std::move(chunk), fileName, 0);
+							auto closure = std::make_shared<RyClosure>(function);
+							moduleCache[fileName] = closure;
+							REG(instruction.p1) = RyValue(closure);
+						}
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(class) : {
+					{
+						std::string name = CONSTANTS[instruction.p2p3()].to_string();
+						auto klass = std::make_shared<Frontend::RyClass>(name);
+						REG(instruction.p1) = RyValue(klass);
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(method) : {
+					{
+						RyValue klass = REG(instruction.p1);
+						RyValue method = REG(instruction.p2);
+						std::string name = CONSTANTS[instruction.p3].to_string();
+						if (klass.isClass() && method.isClosure()) {
+							klass.asClass()->methods[name] = method.asClosure();
+						} else {
+							runtimeError("Invalid method definition.");
+							goto trigger_panic;
+						}
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(inherit) : {
+					{
+						RyValue sub = REG(instruction.p1);
+						RyValue super = REG(instruction.p2);
+						if (!sub.isClass() || !super.isClass()) {
+							runtimeError("Superclass must be a class.");
+							goto trigger_panic;
+						}
+						sub.asClass()->superclass = super.asClass();
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(verify_abstract) : {
+					{
+						RyValue klassVal = REG(instruction.p1);
+						if (klassVal.isClass()) {
+							klassVal.asClass()->isAbstract = true;
+						}
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(define_private_field) : {
+					{
+						RyValue klass = REG(instruction.p1);
+						std::string name = CONSTANTS[instruction.p2p3()].to_string();
+						if (klass.isClass()) {
+							klass.asClass()->privateFields.insert(name);
+						}
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(for_each_next) : {
+					{
+						uint8_t iterReg = instruction.p1;
+						// Use direct access to ensure we are reading/writing the actual register state
+						double currentIdx = REG(iterReg).asNumber();
+						RyValue colVal = REG(iterReg - 1); // Make a copy to avoid aliasing issues
+						bool advanced = false;
+
+						if (colVal.isRange()) {
+							RyRange range = colVal.asRange();
+							double val = range.start + currentIdx;
+							if (val <= range.end) {
+								REG(iterReg + 1) = RyValue(val);
+								advanced = true;
+							} else {
+								// Loop has finished iterating
+								advanced = false;
+							}
+						} else if (colVal.isList()) {
+							const auto &list = colVal.asList();
+							int i = static_cast<int>(currentIdx);
+							if (i >= 0 && i < static_cast<int>(list->size())) {
+								if (i < 0) {
+									runtimeError("IndexError: loop is stuck due to negative index");
+									goto trigger_panic;
+								}
+								if (currentIdx >= INT_MAX) {
+									runtimeError("IndexError: loop is stuck due to large index");
+									goto trigger_panic;
+								}
+
+								REG(iterReg + 1) = (*list)[i];
+								advanced = true;
+							} else {
+								// Loop has finished iterating
+								advanced = false;
+							}
+						} else if (colVal.isString()) {
+							const std::string &s = colVal.asString();
+							int i = static_cast<int>(currentIdx);
+							if (i >= 0 && i < static_cast<int>(s.length())) {
+								if (i < 0) {
+									runtimeError("IndexError: loop is stuck due to negative index");
+									goto trigger_panic;
+								}
+								if (currentIdx >= INT_MAX) {
+									runtimeError("IndexError: loop is stuck due to large index");
+									goto trigger_panic;
+								}
+
+								REG(iterReg + 1) = RyValue(s[i]);
+								advanced = true;
+							} else {
+								// Loop has finished iterating
+								advanced = false;
+							}
+						}
+
+
+						if (advanced) {
+							REG(iterReg) = RyValue(currentIdx + 1.0); // Increment internal index
+						} else {
+							FRAME.ip += instruction.p2p3(); // Jump to exit
+						}
+					}
+					READ_AND_DISPATCH();
+				}
+
+				START_OPCODE(panic) : {
+				trigger_panic: {
+					std::string output;
+					if (!last_error_message.empty()) {
+						output = last_error_message;
+						last_error_message.clear();
+					} else if (instruction.opcode == OP_PANIC && REG(instruction.p1).isString()) {
+						output = REG(instruction.p1).asString();
+					} else {
+						output = "Runtime Panic";
+					}
 
 					if (panicStack.empty()) {
+						std::cerr << "Traceback (most recent calls)" << std::endl;
+						std::string lastFile = "";
+						for (int i = frameCount - 1; i >= 0; i--) {
+							auto &frame = frames[i];
+							auto func = frame.closure->function;
+							size_t instruction_offset = (frame.ip - 1) - func->chunk.code.data();
+							int line = func->chunk.lines[instruction_offset];
+
+							std::string funcName = func->name;
+							std::string fileName;
+
+							if (funcName == "<main>" || funcName.empty()) {
+								fileName = "main script";
+								funcName = funcName.empty() ? "script" : "main";
+							} else if (funcName.find(".ry") != std::string::npos) {
+								fileName = funcName;
+								funcName = "module top-level";
+							} else {
+								// It's a regular function. Find its file from a previous frame.
+								for (int j = i; j >= 0; j--) {
+									std::string potentialFile = frames[j].closure->function->name;
+									if (potentialFile == "<main>" || potentialFile.find(".ry") != std::string::npos) {
+										fileName = (potentialFile == "<main>") ? "main script" : potentialFile;
+										break;
+									}
+								}
+							}
+
+							if (fileName != lastFile && !fileName.empty()) {
+								std::cerr << " - in file <" << fileName << ">" << std::endl;
+								lastFile = fileName;
+							}
+							std::cerr << "\t-> at line " << line << " in \"" << funcName << "\"" << std::endl;
+						}
+						std::cerr << std::endl;
+
 						if (frameCount > 0) {
 							auto &frame = frames[frameCount - 1];
-							size_t instruction = frame.ip - frame.closure->function->chunk.code.data() - 1;
+							size_t instruction = (frame.ip - 1) - frame.closure->function->chunk.code.data();
 							int line = frame.closure->function->chunk.lines[instruction];
 							int column = frame.closure->function->chunk.columns[instruction];
+							std::string sourceForReport;
+							std::string functionName = frame.closure->function->name;
 
-							RyTools::report(line, column, "", output, vmSource);
+							if (functionName.find(".ry") != std::string::npos) {
+								// Error is in an imported file. Read the file's source.
+								std::ifstream file(functionName);
+								if (file.is_open()) {
+									sourceForReport.assign((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+								}
+							} else if (functionName != "<main>" && !functionName.empty() &&
+												 functionName.find("::") == std::string::npos) {
+								// Error is in a function defined in the REPL. Use the cached block source.
+								sourceForReport = lastReplBlockSource;
+							} else {
+								// Error is in the top-level of the current REPL/script input.
+								sourceForReport = vmSource;
+							}
+							RyTools::report(line, column, "", output, sourceForReport);
 						}
 
-						resetStack();
 						return INTERPRET_RUNTIME_ERROR;
 					}
 
 					ControlBlock block = panicStack.back();
 					panicStack.pop_back();
 
-					frameCount = block.frameDepth;
-					stackTop = stack + block.stackDepth;
-					closeUpvalues(stackTop);
-					push(RyValue(output));
+					while (frameCount > block.frameDepth) {
+						closeUpvalues(frames[frameCount - 1].reg_base);
+						frameCount--;
+					}
+
+					// Store the exception so the catch block can retrieve it
+					lastException = RyValue(output);
 
 					FRAME.ip = FRAME.closure->function->chunk.code.data() + block.handlerIP;
-					break;
 				}
-				case OP_CALL: {
-					uint8_t argCount = READ_BYTE();
-					RyValue callee = *(stackTop - 1 - argCount);
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(call) : {
+					{
+						uint8_t calleeReg = instruction.p1;
+						uint8_t argCount = instruction.p2;
+						RyValue &callee = REG(calleeReg);
 
-					if (callee.isNative()) {
-						try {
-							auto nativeObj = callee.asNative();
-							RyValue result = nativeObj->function(argCount, stackTop - argCount, globals);
-
-							// Identify the callee's index
-							int calleeIndex = 1 + argCount;
-
-							stackTop -= calleeIndex; // Pop args and function
-							push(result);
-						} catch (const std::runtime_error &e) {
-							runtimeError("%s", e.what());
-							goto trigger_panic;
-						}
-					} else if (callee.isClosure()) {
-						auto closure = callee.asClosure();
-						if (argCount != closure->function->arity) {
-							runtimeError("Expected %d arguments but got %d.", closure->function->arity, argCount);
-							goto trigger_panic;
-						}
-
-						CallFrame *frame = &frames[frameCount++];
-						frame->closure = closure;
-						frame->ip = closure->function->chunk.code.data();
-						frame->slots = stackTop - argCount - 1;
-					} else if (callee.isFunction()) {
-						if (argCount != callee.asFunction()->arity) {
-							runtimeError("Expected %d arguments but got %d.", callee.asFunction()->arity, argCount);
-							goto trigger_panic;
-						}
-
-						CallFrame *frame = &frames[frameCount++];
-
-						frame->closure = std::make_shared<RyClosure>(callee.asFunction());
-						frame->ip = frame->closure->function->chunk.code.data();
-						frame->slots = stackTop - argCount - 1;
-					} else if (callee.isClass()) {
-						auto klass = callee.asClass();
-						auto instance = std::make_shared<Frontend::RyInstance>(klass);
-						*(stackTop - argCount - 1) = RyValue(instance);
-
-						auto initializer = klass->methods.find("init");
-						if (initializer != klass->methods.end()) {
-							CallFrame *frame = &frames[frameCount++];
-							frame->closure = initializer->second;
-							frame->ip = frame->closure->function->chunk.code.data();
-							frame->slots = stackTop - argCount - 1;
-
-							if (argCount != frame->closure->function->arity) {
-								runtimeError("Expected %d arguments but got %d.", frame->closure->function->arity, argCount);
+						if (callee.isNative()) {
+							auto native = callee.asNative();
+							if (native->function == nullptr) {
+								runtimeError("Native function '%s' is missing implementation (NULL pointer).", native->name.c_str());
 								goto trigger_panic;
 							}
-						} else if (argCount != 0) {
-							runtimeError("Expected 0 arguments but got %d.", argCount);
+							RyValue result = native->function(argCount, &REG(calleeReg + 1), globals);
+							REG(calleeReg) = result;
+						} else if (callee.isClosure()) {
+							auto closure = callee.asClosure();
+							if (argCount != closure->function->arity) {
+								runtimeError("ArgumentError: Function '%s' expected %d arguments but got %d.",
+														 closure->function->name.c_str(), closure->function->arity, argCount);
+								goto trigger_panic;
+							}
+
+							if (closure->function->isAbstract) {
+								runtimeError("TypeError: Cannot call abstract method '%s'.", closure->function->name.c_str());
+								goto trigger_panic;
+							}
+
+							int caller_base = FRAME.reg_base;
+							CallFrame *frame = &frames[frameCount++];
+							frame->closure = closure;
+							frame->ip = closure->function->chunk.code.data();
+							frame->reg_base = caller_base + calleeReg; // Arguments follow callee
+						} else if (callee.isFunction()) {
+							// This path is less common as functions are usually wrapped in closures
+							auto func = callee.asFunction();
+							if (argCount != func->arity) {
+								runtimeError("ArgumentError: Function '%s' expected %d arguments but got %d.", func->name.c_str(),
+														 func->arity, argCount);
+								goto trigger_panic;
+							}
+							auto closure = std::make_shared<RyClosure>(func);
+							int caller_base = FRAME.reg_base;
+							CallFrame *frame = &frames[frameCount++];
+							frame->closure = closure;
+							frame->ip = func->chunk.code.data();
+							frame->reg_base = caller_base + calleeReg;
+						} else if (callee.isClass()) {
+							auto klass = callee.asClass();
+							auto instance = std::make_shared<Frontend::RyInstance>(klass);
+							instance->fields = klass->fields;
+							if (klass->isAbstract) { // This check is also in the compiler, but good to have at runtime too
+								runtimeError("TypeError: Cannot create an instance of abstract class '%s'.", klass->name.c_str());
+								goto trigger_panic;
+							}
+							REG(calleeReg) = RyValue(instance); // Put instance in callee's spot
+
+							// Find initializer, walking up the inheritance chain
+							auto current_class = klass;
+							std::shared_ptr<RyClosure> initializer = nullptr;
+							while (current_class != nullptr) {
+								auto it = current_class->methods.find("init");
+								if (it != current_class->methods.end()) {
+									initializer = it->second;
+									break;
+								}
+								current_class = current_class->superclass;
+							}
+
+							if (initializer != nullptr) {
+								int caller_base = FRAME.reg_base;
+								CallFrame *frame = &frames[frameCount++];
+								frame->closure = initializer;
+								frame->ip = frame->closure->function->chunk.code.data();
+								frame->reg_base = caller_base + calleeReg;
+
+								if (argCount != frame->closure->function->arity) {
+									runtimeError("ArgumentError: Constructor for '%s' expected %d arguments but got %d.",
+															 klass->name.c_str(), frame->closure->function->arity, argCount);
+									goto trigger_panic;
+								}
+							} else if (argCount != 0) {
+								runtimeError("ArgumentError: Constructor for '%s' expected 0 arguments but got %d.",
+														 klass->name.c_str(), argCount);
+								goto trigger_panic;
+							}
+						} else if (callee.isBoundMethod()) {
+							auto bound = callee.asBoundMethod();
+							if (argCount != bound->method->function->arity) {
+								runtimeError("ArgumentError: Method '%s' expected %d arguments but got %d.",
+														 bound->method->function->name.c_str(), bound->method->function->arity, argCount);
+								goto trigger_panic;
+							}
+							REG(calleeReg) = bound->receiver;
+
+							int caller_base = FRAME.reg_base;
+							CallFrame *frame = &frames[frameCount++];
+							frame->closure = bound->method;
+							frame->ip = bound->method->function->chunk.code.data();
+							frame->reg_base = caller_base + calleeReg;
+						} else {
+							runtimeError("TypeError: Value of type '%s' is not callable.", callee.typeName().c_str());
 							goto trigger_panic;
 						}
-					} else if (callee.isBoundMethod()) {
-						auto bound = callee.asBoundMethod();
-						*(stackTop - argCount - 1) = bound->receiver;
-
-						CallFrame *frame = &frames[frameCount++];
-						frame->closure = bound->method;
-						frame->ip = frame->closure->function->chunk.code.data();
-						frame->slots = stackTop - argCount - 1;
-
-						if (argCount != frame->closure->function->arity) {
-							runtimeError("Expected %d arguments but got %d.", frame->closure->function->arity, argCount);
-							goto trigger_panic;
+					}
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(return) : {
+					{
+						RyValue result = REG(instruction.p1);
+						if (FRAME.closure->function->name == "init") {
+							result = registers[FRAME.reg_base];
 						}
-					} else {
-						runtimeError("Can only call functions and classes.");
-						goto trigger_panic;
-					}
-					break;
-				}
-				case OP_RETURN: {
-					RyValue result = pop();
-					if (FRAME.closure->function->name == "init") {
-						result = FRAME.slots[0];
-					}
-					closeUpvalues(FRAME.slots);
+						closeUpvalues(FRAME.reg_base);
 
-					// Save the starting point of the frame it's are about to leave
-					RyValue *currentFrameSlots = FRAME.slots;
+						int destinationReg = FRAME.reg_base;
 
-					frameCount--;
+						frameCount--;
 
-					if (frameCount == 0) {
-						if (stackTop > stack) {
-							pop();
+						if (frameCount == 0) {
+							return INTERPRET_OK;
 						}
-						return INTERPRET_OK;
+
+						registers[destinationReg] = result;
 					}
-
-					// Reset stackTop to where the CALLEE started (popping args + callee)
-					stackTop = currentFrameSlots;
-					push(result);
-					break;
+					READ_AND_DISPATCH();
 				}
-				case OP_FOR_EACH_NEXT: {
-					uint16_t offset = READ_SHORT();
-					RyValue indexValue = peek(0);
-					RyValue collectionValue = peek(1);
-
-					int index = (int) indexValue.asNumber();
-
-					if (!indexValue.isNumber()) {
-						std::cerr << "\n[ENGINE ERROR] Stack Corruption Detected!" << std::endl;
-						std::cerr << "Expected Number (Double) for loop index, but found: " << indexValue.to_string() << std::endl;
-
-						// THE STACK TRACE
-						std::cerr << "--- VM STACK TRACE ---" << std::endl;
-						for (RyValue *slot = stackTop - 1; slot >= stack; slot--) {
-							int index = slot - stack;
-
-							std::cerr << "[" << index << "]: " << slot->to_string() << std::endl;
-						}
-						std::cerr << "----------------------" << std::endl;
-
-						// Now we can exit gracefully or throw to see the GDB trace
-						exit(1);
+				START_OPCODE(attempt) : {
+					{
+						uint16_t offset = instruction.p2p3();
+						ControlBlock block;
+						block.frameDepth = frameCount;
+						block.stackDepth = 0;
+						block.handlerIP = (int) (FRAME.ip - FRAME.closure->function->chunk.code.data()) + offset;
+						panicStack.emplace_back(block);
 					}
-
-					if (collectionValue.isRange()) {
-						RyRange range = collectionValue.asRange();
-
-						// Calculate current value: start + index
-						// For '1 to 10', if index is 0, value is 1.
-						double current = range.start + index;
-
-						// Check bounds
-						bool isInBounds = (range.start < range.end) ? (current < range.end) : (current > range.end);
-
-						if (isInBounds) {
-							*(stackTop - 1) = RyValue((double) (index + 1));
-							push(RyValue((double) current));
-						} else {
-							FRAME.ip += offset;
-						}
-					} else if (collectionValue.isList()) {
-						auto list = collectionValue.asList();
-						if (index < list->size()) {
-							*(stackTop - 1) = RyValue((double) (index + 1));
-							push((*list)[index]);
-						} else {
-							FRAME.ip += offset;
-						}
-					} else {
-						runtimeError("Can only use 'each' on lists or ranges.");
-						goto trigger_panic;
-					}
-					break;
+					READ_AND_DISPATCH();
 				}
-				case OP_BUILD_RANGE_LIST: {
-					double end = pop().asNumber();
-					double start = pop().asNumber();
-					push(RyValue(RyRange{start, end}));
-					break;
-				}
-
-				case OP_BUILD_LIST: {
-					uint8_t count = READ_BYTE();
-					auto listVec = std::make_shared<std::vector<RyValue>>();
-
-					// Elements are on stack in order, but we pop them in reverse
-					// A simple way is to pre-size and fill from the end
-					listVec->resize(count);
-					for (int i = count - 1; i >= 0; i--) {
-						(*listVec)[i] = pop();
-					}
-
-					push(RyValue(listVec));
-					break;
-				}
-				case OP_ATTEMPT: {
-					uint16_t jumpOffset = READ_SHORT();
-					ControlBlock block;
-					block.stackDepth = (int) (stackTop - stack);
-					block.frameDepth = frameCount;
-
-					block.handlerIP = (int) ((FRAME.ip + jumpOffset) - FRAME.closure->function->chunk.code.data());
-
-					panicStack.push_back(block);
-					break;
-				}
-				case OP_INHERIT: {
-					RyValue superclassValue = peek(1);
-					if (!superclassValue.isClass()) {
-						runtimeError("Superclass must be a class.");
-						goto trigger_panic;
-					}
-
-					auto subclass = peek(0).asClass();
-					subclass->superclass = superclassValue.asClass();
-					pop(); // Pop the superclass, leave the subclass for OP_METHOD
-					break;
-				}
-				case OP_END_ATTEMPT: {
+				START_OPCODE(end_attempt) : {
 					if (!panicStack.empty()) {
 						panicStack.pop_back();
-					} else {
-						runtimeError("Cannot end attempt if panicStack is empty.");
-						goto trigger_panic;
 					}
-					break;
+					READ_AND_DISPATCH();
 				}
-				case OP_GET_INDEX: {
-					RyValue index = pop();
-					RyValue object = pop();
+				START_OPCODE(load_exception) : {
+					REG(instruction.p1) = lastException;
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(close_upvalue) : {
+					closeUpvalues(FRAME.reg_base + instruction.p1);
+					READ_AND_DISPATCH();
+				}
+				START_OPCODE(assign_local) : {
+					{
+						uint8_t destRegIdx = instruction.p1;
+						uint8_t srcRegIdx = instruction.p2;
+						int fullDestReg = FRAME.reg_base + destRegIdx;
+						RyValue &newVal = REG(srcRegIdx);
 
-					if (object.isList()) {
-						auto list = object.asList();
-						// Ensure the index is a number
-						if (!index.isNumber()) {
-							runtimeError("List index must be a number.");
-							goto trigger_panic;
-						}
-						int i = (int) index.asNumber();
-						if (i >= 0 && i < list->size()) {
-							push((*list)[i]);
+						if (registerTypeLocked[fullDestReg]) {
+							std::string &lockedType = registerTypeNames[fullDestReg];
+							std::string newType = newVal.typeName();
+							if (lockedType != newType && !newVal.isNil()) {
+								runtimeError("TypeError: This local variable has a locked type of '%s' and cannot be reassigned to a "
+														 "value of type '%s'.",
+														 lockedType.c_str(), newType.c_str());
+								goto trigger_panic;
+							}
 						} else {
-							runtimeError("List index out of bounds.");
-							goto trigger_panic;
+							// First assignment, lock the type.
+							if (!newVal.isNil()) {
+								registerTypeNames[fullDestReg] = newVal.typeName();
+								registerTypeLocked[fullDestReg] = true;
+							}
 						}
-					} else if (object.isMap()) {
-						auto ryMap = object.asMap();
 
-						if (ryMap->find(index) != ryMap->end()) {
-							push((*ryMap)[index]);
-						} else {
-							runtimeError("Key '%s' not found in map.", index.to_string().c_str());
-							goto trigger_panic;
-						}
-					} else if (object.isString()) {
-						auto str = object.to_string();
-						if (!index.isNumber()) {
-							runtimeError("String index must be a number.");
-							goto trigger_panic;
-						}
-						int i = (int) index.asNumber();
-						if (i >= 0 && i < str.length()) {
-							push(RyValue(std::string(1, str[i])));
-						} else {
-							runtimeError("String index out of bounds.");
-							goto trigger_panic;
-						}
-					} else {
-						runtimeError("Can only index lists, maps, and strings.");
-						goto trigger_panic;
+						REG(destRegIdx) = newVal;
 					}
-					break;
+					READ_AND_DISPATCH();
 				}
-				case OP_GET_UPVALUE: {
-					uint8_t slot = READ_BYTE();
-					push(*frames[frameCount - 1].closure->upvalues[slot]->location);
-					break;
-				}
-				case OP_SET_UPVALUE: {
-					uint8_t slot = READ_BYTE();
-					*FRAME.closure->upvalues[slot]->location = peek(0);
-					break;
-				}
-				case OP_CLOSURE: {
-					std::shared_ptr<Frontend::RyFunction> function = READ_CONSTANT().asFunction();
-
-					auto closure = std::make_shared<RyClosure>(function);
-					push(RyValue(closure));
-
-					for (int i = 0; i < function->upvalueCount; i++) {
-						uint8_t isLocal = READ_BYTE();
-						uint8_t index = READ_BYTE();
-
-						if (isLocal) {
-							closure->upvalues[i] = captureUpvalue(FRAME.slots + index);
-						} else {
-							closure->upvalues[i] = FRAME.closure->upvalues[index];
+				START_OPCODE(type_lock) : {
+					{
+						int regIdx = FRAME.reg_base + instruction.p1;
+						RyValue &val = registers[regIdx];
+						if (!val.isNil()) {
+							registerTypeNames[regIdx] = val.typeName();
+							registerTypeLocked[regIdx] = true;
 						}
 					}
-					break;
+					READ_AND_DISPATCH();
 				}
-				case OP_CLASS: {
-					RyValue name = READ_CONSTANT();
-					auto klass = std::make_shared<Frontend::RyClass>(name.to_string());
-					push(RyValue(klass));
-					break;
-				}
-				case OP_METHOD: {
-					RyValue name = READ_CONSTANT();
-					RyValue method = peek(0);
-					RyValue klass = peek(1);
-					auto closure = method.asClosure();
-					klass.asClass()->methods[name.to_string()] = closure;
-					pop();
-					break;
-				}
-				case OP_GET_PROPERTY: {
-					RyValue nameValue = READ_CONSTANT();
-					std::string propertyName = nameValue.to_string();
-
-					RyValue object = peek(0);
-
-					// Handle properties that REPLACE the object (like .len)
-					if (propertyName == "len") {
-						pop(); // Now we can safely remove the list
-						if (object.isList())
-							push(RyValue((double) object.asList()->size()));
-						else if (object.isString())
-							push(RyValue((double) object.to_string().length()));
-						else if (object.isMap())
-							push(RyValue((double) object.asMap()->size()));
-						break;
+				START_OPCODE(type_unlock) : {
+					int regIdx = FRAME.reg_base + instruction.p1;
+					if (regIdx < 256) {
+						registerTypeLocked[regIdx] = false;
+						registerTypeNames[regIdx] = "";
 					}
-
-					// Handle methods (the object stays on the stack as the 'receiver')
-					if (propertyName == "pop") {
-						// We leave the list at peek(0) and push the function on top
-						auto nativeObj = std::make_shared<Frontend::RyNative>(ry_pop, 0);
-						push(RyValue(nativeObj));
-						break;
-					}
-
-					// If it's not a special property, check if it's a map key
-					if (object.isMap()) {
-						auto ryMap = object.asMap();
-						auto it = ryMap->find(nameValue);
-						if (it != ryMap->end()) {
-							pop(); // Remove the map
-							push(it->second); // Push the value found
-							break;
-						}
-					}
-
-					if (object.isInstance()) {
-						auto instance = object.asInstance();
-						if (instance->fields.count(propertyName)) {
-							pop(); // Instance
-							push(instance->fields[propertyName]);
-							break;
-						}
-						auto method = instance->klass->methods.find(propertyName);
-						if (method != instance->klass->methods.end()) {
-							pop(); // Instance
-							auto bound = std::make_shared<Frontend::RyBoundMethod>(object, method->second);
-							push(RyValue(bound));
-							break;
-						}
-					}
-
-					if (object.isClass()) {
-						auto klass = object.asClass();
-						auto it = klass->methods.find(propertyName);
-						if (it != klass->methods.end()) {
-							pop();
-							push(it->second);
-							break;
-						}
-					}
-
-					// If we found nothing, pop the object before throwing the error
-					pop();
-					runtimeError("Property '%s' not found on type.", propertyName.c_str());
-					goto trigger_panic;
-				}
-				case OP_SET_INDEX: {
-					RyValue value = pop();
-					RyValue index = pop();
-					RyValue object = pop();
-
-					if (object.isList()) {
-						auto list = object.asList();
-						// Ensure the index is a number
-						if (!index.isNumber()) {
-							runtimeError("List index must be a number.");
-							goto trigger_panic;
-						}
-						(*list)[(int) index.asNumber()] = value;
-						// D push(value);
-					} else if (object.isString()) {
-						runtimeError("Strings are immutable and do not support index assignment.");
-						goto trigger_panic;
-					} else if (object.isInstance()) {
-						// This might be used for obj["field"] access if supported
-						// For now, we fall through to error as Ry typically uses dot notation for instances
-						runtimeError("Instances do not support index assignment.");
-						goto trigger_panic;
-					} else {
-						runtimeError("Only lists support index assignment.");
-						goto trigger_panic;
-					}
-					break;
-				}
-				case OP_SET_PROPERTY: {
-					RyValue nameVal = READ_CONSTANT();
-					RyValue value = pop();
-					RyValue object = peek(0);
-
-					if (object.isInstance()) {
-						auto instance = object.asInstance();
-						instance->fields[nameVal.to_string()] = value;
-						pop(); // Object
-						push(value);
-					} else {
-						runtimeError("Only instances have fields.");
-						goto trigger_panic;
-					}
-					break;
+					READ_AND_DISPATCH();
 				}
 
-				case OP_BITWISE_AND: {
-					RyValue b = pop();
-					RyValue a = pop();
-
-					// Ensure that they are numbers to avoid crashing
-					if (!a.isNumber() || !b.isNumber()) {
-						runtimeError("Operands must be numbers for bitwise operations.");
-						goto trigger_panic;
-					}
-
-					// Cast to integers for the C++ bitwise & operator
-					long result = (long) a.asNumber() & (long) b.asNumber();
-					push(RyValue((double) result));
-					break;
-				}
-				case OP_BITWISE_OR: {
-					RyValue b = pop();
-					RyValue a = pop();
-
-					// Ensure that they are numbers to avoid crashing
-					if (!a.isNumber() || !b.isNumber()) {
-						runtimeError("Operands must be numbers for bitwise operations.");
-						goto trigger_panic;
-					}
-
-					// Cast to integers for the C++ bitwise | operator
-					long result = (long) a.asNumber() | (long) b.asNumber();
-					push(RyValue((double) result));
-					break;
-				}
-				case OP_BITWISE_XOR: {
-					RyValue b = pop();
-					RyValue a = pop();
-
-					// Ensure that they are numbers to avoid crashing
-					if (!a.isNumber() || !b.isNumber()) {
-						runtimeError("Operands must be numbers for bitwise operations.");
-						goto trigger_panic;
-					}
-
-					// Cast to integers for the C++ bitwise ^ operator
-					long result = (long) a.asNumber() ^ (long) b.asNumber();
-					push(RyValue((double) result));
-					break;
-				}
-				case OP_LEFT_SHIFT: {
-					RyValue b = pop();
-					RyValue a = pop();
-
-					// Ensure that they are numbers to avoid crashing
-					if (!a.isNumber() || !b.isNumber()) {
-						runtimeError("Operands must be numbers for bitwise operations.");
-						goto trigger_panic;
-					}
-
-					// Cast to integers for the C++ bitwise << operator
-					long result = (long) a.asNumber() << (long) b.asNumber();
-					push(RyValue((double) result));
-					break;
-				}
-				case OP_RIGHT_SHIFT: {
-					RyValue b = pop();
-					RyValue a = pop();
-
-					// Ensure that they are numbers to avoid crashing
-					if (!a.isNumber() || !b.isNumber()) {
-						runtimeError("Operands must be numbers for bitwise operations.");
-						goto trigger_panic;
-					}
-
-					// Cast to integers for the C++ bitwise >> operator
-					long result = (long) a.asNumber() >> (long) b.asNumber();
-					push(RyValue((double) result));
-					break;
-				}
-				case OP_COPY: {
-					push(peek(0));
-					break;
-				}
-				case OP_BUILD_MAP: {
-					uint8_t count = READ_BYTE();
-					auto mapPtr = std::make_shared<std::unordered_map<RyValue, RyValue, RyValueHasher>>();
-
-					for (int i = 0; i < count; i++) {
-						RyValue value = pop();
-						RyValue key = pop();
-						(*mapPtr)[key] = value;
-					}
-
-					push(RyValue(mapPtr));
-					break;
-				}
-				case OP_IMPORT: {
-					RyValue fileNameValue = pop();
-					if (!fileNameValue.isString()) {
-						runtimeError("Import path must be a string.");
-						goto trigger_panic;
-					}
-					std::string fileName = RyTools::findModulePath(fileNameValue.to_string(), false);
-
-					// Check if the module is already compiled and cached
-					auto cached = moduleCache.find(fileName);
-					if (cached != moduleCache.end()) {
-						// Found in cache, push it and call it.
-						push(RyValue(cached->second));
-
-						CallFrame *frame = &frames[frameCount++];
-						frame->closure = cached->second;
-						frame->ip = frame->closure->function->chunk.code.data();
-						frame->slots = stackTop - 1;
-						break; // Done with this opcode
-					}
-
-					// Read the file
-					std::ifstream file(fileName);
-					if (!file.is_open()) {
-						runtimeError("Could not open script file '%s'.", fileName.c_str());
-						goto trigger_panic;
-					}
-					std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-
-					// Compile the imported script
-					Backend::Lexer lexer(source);
-					auto tokens = lexer.scanTokens();
-
-					// Use a temporary set for aliases if needed
-					std::set<std::string> tempAliases;
-					Backend::Parser parser(tokens, tempAliases, source);
-					auto statements = parser.parse();
-
-					Compiler compiler = Compiler(nullptr, source);
-					Chunk chunk;
-					if (!compiler.compile(statements, &chunk)) {
-						runtimeError("Failed to compile imported script '%s'.", fileName.c_str());
-						goto trigger_panic;
-					}
-
-					// Execute the script immediately
-					auto function = std::make_shared<Frontend::RyFunction>(std::move(chunk), fileName, 0);
-
-					auto closure = std::make_shared<RyClosure>(function);
-					// Store the newly compiled module in the cache
-					moduleCache[fileName] = closure;
-
-					push(RyValue(closure));
-
-					CallFrame *frame = &frames[frameCount++];
-					frame->closure = closure; // Assign the closure object
-					frame->ip = closure->function->chunk.code.data();
-					frame->slots = stackTop - 1;
-
-					// The VM will now continue running the code inside the imported file
-					// before returning to the original script.
-					break;
-				}
+#if !DIRECT_THREADING
 				default:
+					printf("Unknown opcode %d\n", instruction.opcode);
 					return INTERPRET_COMPILE_ERROR;
 			}
 		}
-
-#undef FRAME
-#undef READ_BYTE
-#undef READ_CONSTANT
-#undef READ_SHORT
+#endif
+		// This part is reached only if direct threading is enabled and something goes wrong,
+		// or if the loop in non-direct threading is broken.
+		return INTERPRET_RUNTIME_ERROR;
 	}
 
 } // namespace RyRuntime

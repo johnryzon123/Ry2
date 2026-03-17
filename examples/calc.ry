@@ -1,8 +1,9 @@
 import("math.ry")
+import("types.ry")
 
 class Calculator {
-    data input_str
-    data pos
+    data input_str = ""
+    data pos = 0
 
     func init(input) {
         this.input_str = input
@@ -16,44 +17,10 @@ class Calculator {
         return this.input_str[this.pos]
     }
 
-    func to_number(s) {
-        data res = 0.0
-        data i = 0
-        data divisor = 1.0
-        data in_fraction = false
-
-        while i < s.len {
-            data c = s[i]
-            if c == "." {
-                in_fraction = true
-            } else {
-                data d = 0
-                if c == "1" { d = 1 }
-                else if c == "2" { d = 2 }
-                else if c == "3" { d = 3 }
-                else if c == "4" { d = 4 }
-                else if c == "5" { d = 5 }
-                else if c == "6" { d = 6 }
-                else if c == "7" { d = 7 }
-                else if c == "8" { d = 8 }
-                else if c == "9" { d = 9 }
-
-                if in_fraction {
-                    divisor = divisor * 10.0
-                    res = res + (d / divisor)
-                } else {
-                    res = res * 10.0 + d
-                }
-            }
-            i = i + 1
-        }
-        return res
-    }
-
     func parse_number() {
         data num_str = ""
         data c = this.peek()
-        while (c >= "0" and c <= "9") or c == "." {
+        while (is_num(c)) or c == "." {
             num_str = num_str + c
             this.pos = this.pos + 1
             c = this.peek()
@@ -61,13 +28,13 @@ class Calculator {
         if num_str == "" {
             panic("Syntax Error: Expected a number or '(', but found '" + this.peek() + "'.")
         }
-        return this.to_number(num_str)
+        return num(this.num_str)
     }
 
     func parse_identifier() {
         data id = ""
         data c = this.peek()
-        while c >= "a" and c <= "z" {
+        while is_alpha(c) {
             id = id + c
             this.pos = this.pos + 1
             c = this.peek()
@@ -77,16 +44,18 @@ class Calculator {
 
     func factor() {
         data c = this.peek()
+        out("Debug: C: ${c}")
         if c == "(" {
+            out("Debug: Running grouping factor")
             this.pos = this.pos + 1 # consume '('
             data result = this.expr()
             this.pos = this.pos + 1 # consume ')'
             return result
-        }
-        if (c >= "0" and c <= "9") or c == "." {
+        } else if (is_num(c)) or c == "." {
+            out("Debug: Running numarical factor")
             return this.parse_number()
-        }
-        if c >= "a" and c <= "z" {
+        } else if is_alpha(c) {
+            out("Debug: Running alphabetical factor")
             data id = this.parse_identifier()
             if id == "pi" { return Math.pi }
             if id == "e" { return Math.e }
@@ -104,8 +73,9 @@ class Calculator {
                 panic("Unknown function: " + id)
             }
             panic("Unknown constant or identifier: " + id)
+        } else {
+            panic("Unexpected character: " + c)
         }
-        panic("Unexpected character: " + c)
     }
 
     func exponential() {

@@ -5,14 +5,17 @@
 */
 
 #pragma once // Include guard
+#include <array>
+#include <map>
 #include <memory>
+#include <vector>
 #include "chunk.h" // For the byte chunk
 #include "func.h"
-#include "map" // For map
-#include "unordered_map" // For unordered map
 
 namespace RyRuntime {
 	struct RyUpValue {
+		std::string typeName;
+		bool typeLocked = false;
 		RyValue *location; // Points to the stack slot
 		RyValue closed; // Stores the value when the stack frame dies
 		std::shared_ptr<RyUpValue> next; // Useful for the VM to track open upvalues
@@ -30,8 +33,8 @@ namespace RyRuntime {
 	// Used for functions
 	struct CallFrame {
 		std::shared_ptr<RyClosure> closure; // The function being run
-		uint8_t *ip; // The IP inside THIS function
-		RyValue *slots; // Where this function's stack begins
+		Instruction *ip; // The IP inside THIS function
+		int reg_base; // Base index into the main register array
 	};
 
 	// Used for panics
@@ -52,42 +55,34 @@ namespace RyRuntime {
 		~VM() = default; // Default Constructor
 
 		// The main entry point to run a piece of Ry code
-		InterpretResult interpret(std::shared_ptr<Frontend::RyFunction> function);
-
-		// Resolver
-		void resolve(Backend::Expr *expr, int depth) { locals[expr] = depth; }
+		auto interpret(std::shared_ptr<Frontend::RyFunction> function) -> InterpretResult;
 
 	private:
-		InterpretResult run(); // Runs ry
+		auto run() -> InterpretResult; // Runs ry
 		std::map<std::string, RyValue> globals; // Data outside classes/functions
 		std::vector<ControlBlock> panicStack; // Stacks caused by a panic
 		std::shared_ptr<RyUpValue> openUpvalues;
-		std::unordered_map<std::string, std::shared_ptr<RyClosure>> moduleCache;
+		std::map<std::string, std::shared_ptr<RyClosure>> moduleCache;
+		RyValue lastException;
+		uint64_t instruction_count;
+		std::string last_error_message;
 
-		uint8_t *ip; // Points to the NEXT byte to be executed
 		CallFrame frames[64]; // The "Call Stack"
 		int frameCount; // Current depth
+		std::map<std::string, std::string> globalTypes; // global types
 
-		// The bytecode it is currently running
-		Chunk *chunk;
+		// --- The Register File ---
+		static const int REGISTER_COUNT = 256 * 64; // 256 registers per call frame
+		RyValue registers[REGISTER_COUNT];
+		// --- Register Type Infos ---
+		std::array<std::string, 256> registerTypeNames;
+		std::array<bool, 256> registerTypeLocked;
 
-		std::map<Backend::Expr *, int> locals; // Data inside classes/functions
-
-		// --- The Stack ---
-		static const int STACK_MAX = 256; // Maximum stack
-		RyValue stack[STACK_MAX]; // The stack
-		RyValue *stackTop; // Points to where the next pushed value will go
-		RyValue peek(int distance); // Returns the stack based on the distance
-
-		// Stack helpers
-		void resetStack(); // Reset's the stack
-		void push(RyValue value); // Adds a stack
-		RyValue pop(); // Removes a stack
 
 		// Runtime helpers
 		void runtimeError(const char *format, ...); // Calls report() for advance error reporting
-		bool isTruthy(RyValue value);
-		std::shared_ptr<RyUpValue> captureUpvalue(RyValue *local);
-		void closeUpvalues(RyValue *last);
+		auto isTruthy(RyValue value) -> bool;
+		auto captureUpvalue(RyValue *local) -> std::shared_ptr<RyUpValue>;
+		void closeUpvalues(int last_reg_base);
 	};
 } // namespace RyRuntime

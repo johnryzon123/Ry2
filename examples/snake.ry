@@ -14,7 +14,7 @@ data is_snake = true
 data score = snake.len - 2
 
 while running {
-    clear()
+    # clear()
     score = snake.len - 2
     out("--- Ry Snake | Score: " + score + " ---")
 
@@ -46,6 +46,10 @@ while running {
     else if move == "s" { next = [head[0], head[1] + 1] }
     else if move == "a" { next = [head[0] - 1, head[1]] }
     else if move == "d" { next = [head[0] + 1, head[1]] }
+    else {
+        out("Pls input a valid move!")
+        skip
+    }
 
     # Collision Check (Self-Harm)
     data hit_wall = false

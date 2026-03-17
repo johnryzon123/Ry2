@@ -1,6 +1,6 @@
 #pragma once
+#include <map>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include "value.h"
 
@@ -36,7 +36,7 @@ namespace Backend {
 		LESS_EQUAL,
 		GREATER_EQUAL,
 		BANG_EQUAL,
-		DOUBLE_COLON,
+		COLON_COLON,
 		LARROW,
 		PLUS_PLUS,
 		MINUS_MINUS,
@@ -45,6 +45,7 @@ namespace Backend {
 
 		// Identifiers
 		NUMBER,
+		CHAR,
 		IDENTIFIER,
 		STRING,
 
@@ -81,11 +82,16 @@ namespace Backend {
 		FAIL,
 		PANIC,
 		FINALLY,
+		PARENT,
+		STATIC,
+		OPEN,
+		ABSTRACT,
 
 
 		// Misc
 		EOF_TOKEN,
-		Nothing_Here
+		Nothing_Here,
+		UNKNOWN
 	};
 
 	struct Token {
@@ -99,7 +105,7 @@ namespace Backend {
 		Token() : type(TokenType::Nothing_Here), lexeme(""), literal(RyValue()), line(0), column(0) {}
 	};
 
-	inline static const std::unordered_map<std::string, TokenType> keywords{
+	inline static const std::map<std::string, TokenType> keywords{
 			{"import", TokenType::IMPORT},	 {"func", TokenType::FUNC},				{"while", TokenType::WHILE},
 			{"if", TokenType::IF},					 {"else", TokenType::ELSE},				{"true", TokenType::TRUE},
 			{"false", TokenType::FALSE},		 {"null", TokenType::NULL_TOKEN}, {"for", TokenType::FOR},
@@ -110,5 +116,7 @@ namespace Backend {
 			{"skip", TokenType::SKIP},			 {"unless", TokenType::UNLESS},		{"until", TokenType::UNTIL},
 			{"do", TokenType::DO},					 {"class", TokenType::CLASS},			{"private", TokenType::PRIVATE},
 			{"childof", TokenType::CHILDOF}, {"attempt", TokenType::ATTEMPT}, {"fail", TokenType::FAIL},
-			{"panic", TokenType::PANIC},		 {"finally", TokenType::FINALLY}};
+			{"panic", TokenType::PANIC},		 {"finally", TokenType::FINALLY}, {"parent", TokenType::PARENT},
+			{"static", TokenType::STATIC},	 {"open", TokenType::OPEN},				{"abstract", TokenType::ABSTRACT},
+			{"ifnot", TokenType::UNLESS}};
 } // namespace Backend

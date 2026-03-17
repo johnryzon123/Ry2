@@ -1,16 +1,18 @@
-# Iterative Fibonacci (returns nth Fibonacci)
-func fib_iter(n) {
-  data a = 0
-  data b = 1
-  data i = 0
-
-  while (i < n) {
-    data temp = a
-    a = b
-    b = temp + b
-    i = i + 1
-  }
-  return a
+func fib_speed_test(data n) {
+    data a = 0
+    data b = 1
+    
+    foreach data i in 1 to n {
+        data temp = a
+        a = b
+        b = temp + b
+    }
+    return a
 }
 
-out(fib_iter(10))
+data start = clock()
+data result = fib_speed_test(1000000) 
+data end = clock()
+
+out("Fibonacci (1M iterations) Result: " + result)
+out("Time Taken: " + (end - start) + " seconds")

@@ -4,8 +4,8 @@
 
 #pragma once
 #include <vector>
-#include "value.h"
 #include "token.h"
+#include "value.h"
 
 namespace Backend {
 
@@ -43,6 +43,7 @@ namespace Backend {
 		inline void number();
 		inline void identifier();
 		inline void str();
+		inline void character();
 
 		inline void scanToken();
 	};

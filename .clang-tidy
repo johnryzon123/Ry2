@@ -1,0 +1,4 @@
+Checks: '-*,clang-analyzer-*,modernize-*'
+HeaderFilterRegex: '.*'
+CheckOptions:
+  - { key: modernize-use-trailing-return-type.AllowShortFunctions, value: '1' }

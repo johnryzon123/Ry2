@@ -4,6 +4,7 @@
 
 
 #include "../include/parser.h"
+#include <cctype>
 #include <memory>
 #include <optional>
 #include "../include/tools.h"
@@ -22,7 +23,7 @@ std::vector<std::shared_ptr<Stmt>> Parser::parse() {
 
 	try {
 		while (!isAtEnd()) {
-			statements.push_back(declaration());
+			statements.emplace_back(declaration());
 		}
 	} catch (const RyTools::ParseError &error) {
 		loopDepth = 0;
@@ -250,7 +251,7 @@ std::shared_ptr<Expr> Parser::addition() {
 
 std::shared_ptr<Expr> Parser::baseValue() {
 	// Handle Literals (Data)
-	if (match({TokenType::NUMBER, TokenType::STRING})) {
+	if (match({TokenType::NUMBER, TokenType::STRING, TokenType::CHAR})) {
 		return std::make_shared<ValueExpr>(previous());
 	}
 
@@ -269,7 +270,7 @@ std::shared_ptr<Expr> Parser::baseValue() {
 		if (!check(TokenType::RBRACKET)) {
 			do {
 				// Recursion: lists can contain any expression (even other lists!)
-				elements.push_back(expression());
+				elements.emplace_back(expression());
 			} while (match({TokenType::COMMA}));
 		}
 		consume(TokenType::RBRACKET, "Expected ']' after list elements.");
@@ -293,7 +294,7 @@ std::shared_ptr<Expr> Parser::baseValue() {
 				auto key = expression();
 				consume(TokenType::COLON, "Expected ':' after map key.");
 				auto value = expression();
-				items.push_back({key, value});
+				items.emplace_back(key, value);
 			} while (match({TokenType::COMMA})); // Separated by commas!
 		}
 
@@ -303,6 +304,10 @@ std::shared_ptr<Expr> Parser::baseValue() {
 
 	if (match({TokenType::THIS})) {
 		return std::make_shared<ThisExpr>(previous());
+	}
+
+	if (match({TokenType::PARENT})) {
+		return std::make_shared<VariableExpr>(previous());
 	}
 
 	// Fallback: Report the error instead of crashing
@@ -336,20 +341,8 @@ std::shared_ptr<Expr> Parser::postfixed() {
 		} else if (match({TokenType::DOT})) {
 			Token name = consume(TokenType::IDENTIFIER, "Expect property name after '.'.");
 
-			if (auto var = std::dynamic_pointer_cast<VariableExpr>(expr)) {
-				if (namespaces.count(var->name.lexeme) > 0) {
-					std::string mangledName = var->name.lexeme + "::" + name.lexeme;
-					Token mangledToken = var->name;
-					mangledToken.lexeme = mangledName;
-					mangledToken.line = var->name.line;
-					mangledToken.column = var->name.column;
-					expr = std::make_shared<VariableExpr>(mangledToken);
-				} else {
-					expr = std::make_shared<GetExpr>(expr, name);
-				}
-			} else {
-				expr = std::make_shared<GetExpr>(expr, name);
-			}
+			expr = std::make_shared<GetExpr>(std::move(expr), name);
+
 		} else if (match({TokenType::PLUS_PLUS, TokenType::MINUS_MINUS})) {
 			Token op = previous();
 			expr = std::make_shared<PostfixExpr>(op, std::move(expr));
@@ -366,7 +359,7 @@ std::shared_ptr<Expr> Parser::finishCall(std::shared_ptr<Expr> callee) {
 
 	if (!check(TokenType::RPAREN)) {
 		do {
-			arguments.push_back(expression());
+			arguments.emplace_back(expression());
 		} while (match({TokenType::COMMA}));
 	}
 
@@ -408,6 +401,11 @@ std::shared_ptr<Stmt> Parser::statement() {
 		return eachStatement();
 	if (match({TokenType::CLASS}))
 		return classStatement();
+	if (check(TokenType::ABSTRACT) && checkNext(TokenType::CLASS)) {
+		consume(TokenType::ABSTRACT, "Expect 'abstract'.");
+		consume(TokenType::CLASS, "Expect 'class'.");
+		return classStatement();
+	}
 	if (match({TokenType::ATTEMPT}))
 		return attemptStatement();
 	if (match({TokenType::PANIC}))
@@ -445,8 +443,11 @@ std::shared_ptr<Stmt> Parser::declaration() {
 }
 
 std::shared_ptr<FunctionStmt> Parser::functionDeclaration(const std::string &kind) {
-	Token name = consume(TokenType::IDENTIFIER, "Expect " + kind + " name.");
-	if (!currentNamespace.empty()) {
+	bool isAbstract = (kind == "abstract_method");
+	std::string displayKind = isAbstract ? "method" : kind;
+
+	Token name = consume(TokenType::IDENTIFIER, "Expect " + displayKind + " name.");
+	if (!currentNamespace.empty() && kind != "method") {
 		name.lexeme = currentNamespace + "::" + name.lexeme;
 	}
 	consume(TokenType::LPAREN, "Expect '(' before parameters");
@@ -465,7 +466,7 @@ std::shared_ptr<FunctionStmt> Parser::functionDeclaration(const std::string &kin
 			}
 
 			// Check for optional '::type'
-			if (match({TokenType::DOUBLE_COLON})) {
+			if (match({TokenType::COLON_COLON})) {
 				typeToken = consume(TokenType::IDENTIFIER, "Expect type after '::'.");
 			}
 
@@ -494,13 +495,12 @@ std::shared_ptr<FunctionStmt> Parser::functionDeclaration(const std::string &kin
 			returnTypeAlias = consume(TokenType::IDENTIFIER, "Expect return type after '->'.");
 		}
 	}
-	consume(TokenType::LBRACE, "Expect '{' before " + kind + " body.");
-
-	// Use std::move for the body to ensure the vector is passed correctly
-	std::vector<std::shared_ptr<Stmt>> body = block();
+	std::vector<std::shared_ptr<Stmt>> body;
+	if (!isAbstract && match({TokenType::LBRACE}))
+		body = block();
 
 	return std::make_shared<FunctionStmt>(name, parameters, std::move(body), std::move(returnTypeNamespace),
-																				std::move(returnTypeAlias));
+																				std::move(returnTypeAlias), isAbstract);
 }
 
 std::shared_ptr<Stmt> Parser::ImportDeclaration() {
@@ -560,7 +560,7 @@ std::shared_ptr<Stmt> Parser::eachStatement() {
 
 	consume(TokenType::DATA, "Expect 'data' in each loop.");
 
-	if (match({TokenType::DOUBLE_COLON})) {
+	if (match({TokenType::COLON_COLON})) {
 		typeToken = consume(TokenType::IDENTIFIER, "Expect type name after '::'.");
 	}
 
@@ -584,7 +584,7 @@ std::shared_ptr<Stmt> Parser::AliasDeclaration() {
 
 	// Check if we are aliasing a raw data type (data::num)
 	if (match({TokenType::DATA})) {
-		consume(TokenType::DOUBLE_COLON, "Expect '::' after data");
+		consume(TokenType::COLON_COLON, "Expect '::' after data");
 		Token type = consume(TokenType::IDENTIFIER, "Expect type name");
 		aliasExpr = std::make_shared<VariableExpr>(type); // Wrap the type name
 	}
@@ -622,7 +622,7 @@ std::shared_ptr<VarStmt> Parser::typeDeclaration(std::optional<Token> prefix, bo
 	std::optional<Token> innerTypeToken = std::nullopt;
 	Token name = Token(TokenType::Nothing_Here, "", RyValue(), 0, 0);
 
-	if (match({TokenType::DOUBLE_COLON})) {
+	if (match({TokenType::COLON_COLON})) {
 		innerTypeToken = consume(TokenType::IDENTIFIER, "Expect type after '::'.");
 	}
 
@@ -721,8 +721,8 @@ std::shared_ptr<Stmt> Parser::untilStatement() {
 
 	// Wrap them in a list of statements
 	std::vector<std::shared_ptr<Stmt>> statements;
-	statements.push_back(body); // Run once first
-	statements.push_back(whileLoop); // Then check the loop
+	statements.emplace_back(body); // Run once first
+	statements.emplace_back(whileLoop); // Then check the loop
 
 	// Return them as a single Block statement
 	return std::make_shared<BlockStmt>(std::move(statements));
@@ -751,8 +751,16 @@ std::shared_ptr<Stmt> Parser::classStatement() {
 	std::vector<std::shared_ptr<VarStmt>> fields;
 	bool isPrivate = false;
 	std::shared_ptr<VariableExpr> superclass = nullptr;
+	bool isAbstract = false;
+	if (current >= 2 && tokens[current - 2].type == TokenType::ABSTRACT)
+		isAbstract = true;
+	if (match({TokenType::ABSTRACT}))
+		isAbstract = true;
 
 	Token name = consume(TokenType::IDENTIFIER, "Expect class name.");
+	if (!currentNamespace.empty()) {
+		name.lexeme = currentNamespace + "::" + name.lexeme;
+	}
 	if (match({TokenType::CHILDOF})) {
 		consume(TokenType::IDENTIFIER, "Expect superclass name after 'childof'.");
 		superclass = std::make_shared<VariableExpr>(previous());
@@ -761,22 +769,53 @@ std::shared_ptr<Stmt> Parser::classStatement() {
 
 
 	while (!check(TokenType::RBRACE) && !isAtEnd()) {
-		bool memberIsPrivate = match({TokenType::PRIVATE});
+		bool memberIsStatic = false;
+		bool memberIsPrivate = false;
+		bool memberIsOpen = false;
+		bool memberIsAbstract = false;
+
+		while (match({TokenType::STATIC, TokenType::PRIVATE, TokenType::OPEN, TokenType::ABSTRACT})) {
+			if (previous().type == TokenType::STATIC)
+				memberIsStatic = true;
+			else if (previous().type == TokenType::PRIVATE)
+				memberIsPrivate = true;
+			else if (previous().type == TokenType::OPEN)
+				memberIsOpen = true;
+			else if (previous().type == TokenType::ABSTRACT)
+				memberIsAbstract = true;
+		}
 
 		if (match({TokenType::FUNC})) {
-			auto method = functionDeclaration("method");
+			auto method = functionDeclaration(memberIsAbstract ? "abstract_method" : "method");
 			method->isPrivate = memberIsPrivate;
-			methods.push_back(method);
+			if (memberIsStatic)
+				method->name.type = TokenType::STATIC;
+			if (memberIsOpen)
+				method->name.literal = RyValue(true);
+			methods.emplace_back(method);
 		} else if (check(TokenType::DATA) || (check(TokenType::IDENTIFIER) && isTypeAlias(peek().lexeme))) {
 			auto field = typeDeclaration(std::nullopt, memberIsPrivate);
-			fields.push_back(field);
+			if (memberIsStatic)
+				field->name.type = TokenType::STATIC;
+			fields.emplace_back(field);
 		} else {
 			error(peek(), "Expect 'func' or 'data' inside class body.");
 		}
 	}
 
+	bool hasAbstractMethod = false;
+	for (const auto &method: methods) {
+		if (method->isAbstract) {
+			hasAbstractMethod = true;
+			break;
+		}
+	}
+	if (hasAbstractMethod && !isAbstract) {
+		error(name, "Class with abstract methods must be declared abstract.");
+	}
+
 	consume(TokenType::RBRACE, "Expect '}' after class body.");
-	return std::make_shared<ClassStmt>(name, std::move(methods), std::move(fields), isPrivate, superclass);
+	return std::make_shared<ClassStmt>(name, std::move(methods), std::move(fields), isPrivate, isAbstract, superclass);
 }
 
 std::shared_ptr<Stmt> Parser::attemptStatement() {
@@ -790,7 +829,7 @@ std::shared_ptr<Stmt> Parser::attemptStatement() {
 	attemptBody = block();
 	if (match({TokenType::FAIL})) {
 		error = consume(TokenType::IDENTIFIER, "Expect error name after 'fail'");
-		if (match({TokenType::DOUBLE_COLON})) {
+		if (match({TokenType::COLON_COLON})) {
 			errorType = consume(TokenType::IDENTIFIER, "Expect error type after '::'.");
 		}
 		consume(TokenType::LBRACE, "Expect '{' before fail block");
@@ -814,7 +853,7 @@ std::shared_ptr<Stmt> Parser::panicStatement() {
 std::vector<std::shared_ptr<Stmt>> Parser::block() {
 	std::vector<std::shared_ptr<Stmt>> statements;
 	while (!check(TokenType::RBRACE) && !isAtEnd()) {
-		statements.push_back(declaration());
+		statements.emplace_back(declaration());
 	}
 	consume(TokenType::RBRACE, "Expect '}' after block.");
 	return statements;

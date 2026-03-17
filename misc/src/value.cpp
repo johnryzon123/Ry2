@@ -15,11 +15,26 @@ RyValue RyValue::operator>(const RyValue &other) const {
 	return RyValue(std::nullptr_t{});
 }
 
-RyValue RyValue::operator<(const RyValue &other) const {
-	if (isNumber() && other.isNumber()) {
-		return RyValue(asNumber() < other.asNumber());
+bool RyValue::operator<(const RyValue &other) const {
+	if (val.index() != other.val.index()) {
+		return val.index() < other.val.index();
 	}
-	return RyValue(std::nullptr_t{});
+
+	if (isNumber())
+		return asNumber() < other.asNumber();
+	if (isChar())
+		return asChar() < other.asChar();
+	if (isString())
+		return asString() < other.asString();
+	if (isBool())
+		return asBool() < other.asBool();
+
+	if (isList())
+		return asList().get() < other.asList().get();
+	if (isMap())
+		return asMap().get() < other.asMap().get();
+
+	return false;
 }
 
 RyValue RyValue::operator>=(const RyValue &other) const {
@@ -55,6 +70,10 @@ std::string RyValue::to_string() const {
 	}
 	if (isBool())
 		return asBool() ? "true" : "false";
+	if (isChar()) {
+		std::string s(1, asChar());
+		return s;
+	}
 	if (isNil())
 		return "null";
 	if (isList()) {
@@ -97,6 +116,39 @@ std::string RyValue::to_string() const {
 	if (isBoundMethod())
 		return "<bound method>";
 	return "<unknown>";
+}
+
+std::string RyValue::typeName() const {
+	if (isNil())
+		return "nil";
+	if (isNumber())
+		return "number";
+	if (isBool())
+		return "boolean";
+	if (isChar())
+		return "char";
+	if (isString()) {
+		return "string";
+	}
+	if (isList())
+		return "list";
+	if (isMap())
+		return "map";
+	if (isRange())
+		return "range";
+	if (isFunction())
+		return "function";
+	if (isNative())
+		return "native";
+	if (isClosure())
+		return "closure";
+	if (isClass())
+		return "class";
+	if (isInstance())
+		return "instance";
+	if (isBoundMethod())
+		return "boundmethod";
+	return "unknown";
 }
 
 RyValue RyValue::operator+(const RyValue &other) const {

@@ -1,6 +1,21 @@
 # errors.ry - A Ry Standard Library
 # "Ry's for You" - Feel free to modify these algorithms!
 
-alias "MathError" as MathError
-alias "IOError" as IOError
-alias "Panic" as UserPanic
+# Provides utilities for creating and handling custom errors.
+namespace Errors {
+    # Creates a new error object. In Ry, this can be a map.
+    func new(data message, data type = "Error") {
+        return {
+            "type": type,
+            "message": message
+        }
+    }
+    # A more specific error type for type mismatches.
+    func typeError(data message) {
+        return new(message, "TypeError")
+    }
+    # A more specific error type for value problems.
+    func valueError(data message) {
+        return new(message, "ValueError")
+    }
+}

@@ -1,4 +1,5 @@
 data start = clock()
-foreach data i in 1 to 1000000 {
+foreach data i in 1 to 10 {
 }
-out(clock() - start)
+data end = clock()
+out(end - start)

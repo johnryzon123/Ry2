@@ -223,7 +223,7 @@ void Optimizer::visitCall(CallExpr &expr) {
 	auto callee = fold(expr.callee);
 	std::vector<std::shared_ptr<Expr>> args;
 	for (auto &arg: expr.arguments) {
-		args.push_back(fold(arg));
+		args.emplace_back(fold(arg));
 	}
 	lastFolded = std::make_shared<CallExpr>(callee, args, expr.Paren);
 }
@@ -238,7 +238,7 @@ void Optimizer::visitGet(GetExpr &expr) {
 void Optimizer::visitMap(MapExpr &expr) {
 	std::vector<std::pair<std::shared_ptr<Expr>, std::shared_ptr<Expr>>> items;
 	for (auto &pair: expr.items) {
-		items.push_back({fold(pair.first), fold(pair.second)});
+		items.emplace_back(fold(pair.first), fold(pair.second));
 	}
 	lastFolded = std::make_shared<MapExpr>(expr.braceToken, items);
 }
@@ -271,7 +271,7 @@ void Optimizer::visitIndex(IndexExpr &expr) {
 void Optimizer::visitList(ListExpr &expr) {
 	std::vector<std::shared_ptr<Expr>> elements;
 	for (auto &el: expr.elements) {
-		elements.push_back(fold(el));
+		elements.emplace_back(fold(el));
 	}
 	lastFolded = std::make_shared<ListExpr>(elements);
 }

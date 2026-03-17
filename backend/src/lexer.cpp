@@ -116,7 +116,7 @@ void Lexer::scanToken() {
 			addToken(TokenType::COMMA);
 			break;
 		case ':':
-			match(':') ? addToken(TokenType::DOUBLE_COLON) : addToken(TokenType::COLON);
+			match(':') ? addToken(TokenType::COLON_COLON) : addToken(TokenType::COLON);
 			break;
 		case '[':
 			addToken(TokenType::LBRACKET);
@@ -145,6 +145,9 @@ void Lexer::scanToken() {
 		case '"':
 			str();
 			break;
+		case '\'':
+			character();
+			break;
 		case ' ':
 		case '\t':
 			break;
@@ -156,8 +159,7 @@ void Lexer::scanToken() {
 			} else if (std::isalpha(c) || c == '_') {
 				identifier();
 			} else {
-				const std::string s(1, c);
-				RyTools::report(line, static_cast<int>(tokenStartColumn), "", "Unexpected character: '" + s + "'", source);
+				addToken(TokenType::UNKNOWN);
 			}
 			break;
 	}
@@ -229,6 +231,7 @@ void Lexer::str() {
 				case '$':
 					value += '$';
 					break;
+
 				default:
 					// For an unrecognized escape sequence like \q, just append the 'q' literally.
 					value += escapedChar;
@@ -275,4 +278,53 @@ void Lexer::str() {
 	next(); // consume closing "
 
 	tokens.emplace_back(TokenType::STRING, value, value, line, static_cast<int>(tokenStartColumn));
+}
+
+void Lexer::character() {
+	char value = '\0';
+
+	if (peek() == '\\') {
+		next(); // consume '\'
+		if (isAtEnd()) {
+			RyTools::report(line, column, "", "Unterminated character.", source);
+			return;
+		}
+		char escapedChar = next();
+		switch (escapedChar) {
+			case 'n':
+				value = '\n';
+				break;
+			case 't':
+				value = '\t';
+				break;
+			case 'r':
+				value = '\r';
+				break;
+			case '\'':
+				value = '\'';
+				break;
+			case '\\':
+				value = '\\';
+				break;
+			default:
+				// For an unrecognized escape sequence, use the character literally
+				value = escapedChar;
+				break;
+		}
+	} else {
+		value = next();
+	}
+
+	if (isAtEnd()) {
+		RyTools::report(line, column, "", "Unterminated character.", source);
+		return;
+	}
+
+	if (peek() != '\'') {
+		RyTools::report(line, column, "", "Character literal must contain exactly one character.", source);
+		return;
+	}
+
+	next(); // consume closing '
+	addToken(TokenType::CHAR, RyValue(value));
 }

@@ -10,10 +10,58 @@ namespace File {
     }
 
     func write(data path, data content) {
-        data result = native.read(path) 
-        if result == null {
-            panic "File Not Found."
+        data success = native.write(path, content)
+        if !success {
+            panic "Failed to write to file '" + path + "'."
         }
-        return native.write(path, content)
+        return success
+    }
+
+    func append(data path, data content) {
+        data success = native.append(path, content)
+        if !success {
+            panic "Failed to append to file '" + path + "'."
+        }
+        return success
+    }
+
+    func exists(data path) {
+        return native.exists(path)
+    }
+
+    func remove(data path) {
+        return native.remove(path)
+    }
+
+    func rename(data oldPath, data newPath) {
+        data success = native.rename(oldPath, newPath)
+        if !success {
+            panic "Failed to rename '" + oldPath + "' to '" + newPath + "'."
+        }
+        return success
+    }
+
+    func size(data path) {
+        data s = native.size(path)
+        if s == -1 {
+             panic "Could not get size of '" + path + "' (File might not exist)."
+        }
+        return s
+    }
+
+    func is_dir(data path) {
+        return native.is_dir(path)
+    }
+
+    func mkdir(data path) {
+        return native.mkdir(path)
+    }
+
+    func cwd() {
+        data result = native.cwd()
+        if result == null {
+            panic "Failed to get current working directory."
+        }
+        return result
     }
 }

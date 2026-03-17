@@ -28,6 +28,16 @@ void interpret(VM &vm, const std::string &source) {
 	Backend::Lexer lexer(source);
 	std::vector<Backend::Token> tokens = lexer.scanTokens();
 
+	// Check for unknown tokens from the lexer
+	for (const auto &token : tokens) {
+		if (token.type == Backend::TokenType::UNKNOWN) {
+			RyTools::report(token.line, token.column, "", "Unexpected character '" + token.lexeme + "'", source);
+		}
+	}
+
+	if (RyTools::hadError)
+		return;
+
 	// Setup Aliases & Parsing
 	std::set<std::string> aliases; // Temporary set for the parser
 	Backend::Parser parser(tokens, aliases, source);
@@ -107,7 +117,7 @@ void runREPL(VM &vm) {
 	}
 }
 
-int main(int argc, char *argv[]) {
+auto main(int argc, char *argv[]) -> int {
 	VM vm;
 
 	if (argc >= 2) {
@@ -122,8 +132,16 @@ int main(int argc, char *argv[]) {
 			std::string src((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());
 			interpret(vm, src);
 		} else if (command == "-v" || command == "--version") {
-			std::cout << "Ry (ByteCode Edition) v0.2.0\n";
+			std::cout << "Ry (ByteCode Edition) v2.0\n";
 		} else {
+			std::ifstream inputFile(argv[2]);
+			if (!inputFile.is_open()) {
+				std::cerr << "Type run to run a file.\n" <<
+										 "Type -v or --version to see the version.\n";
+				return 1;
+			}
+			std::string src((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());
+			interpret(vm, src);
 		}
 	} else {
 		runREPL(vm);

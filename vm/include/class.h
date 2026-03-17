@@ -1,5 +1,6 @@
 #include <memory>
-#include "unordered_map"
+#include <set>
+#include "map"
 #include "vm.h"
 
 namespace Frontend {
@@ -12,14 +13,18 @@ namespace Frontend {
 	public:
 		std::string name;
 		std::shared_ptr<RyClass> superclass = nullptr;
-		std::unordered_map<std::string, std::shared_ptr<RyRuntime::RyClosure>> methods;
-		RyClass(std::string n) : name(n) {}
+		std::map<std::string, std::shared_ptr<RyRuntime::RyClosure>> methods;
+		std::set<std::string> privateFields;
+		std::map<std::string, RyValue> fields;
+		bool isAbstract;
+
+		RyClass(std::string n, bool isAbstract = false) : name(std::move(n)), isAbstract(isAbstract) {}
 	};
 
 	class RyInstance {
 	public:
 		std::shared_ptr<RyClass> klass;
-		std::unordered_map<std::string, RyValue> fields;
+		std::map<std::string, RyValue> fields;
 		RyInstance(std::shared_ptr<RyClass> k) : klass(k) {}
 	};
 

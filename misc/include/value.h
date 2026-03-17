@@ -5,7 +5,6 @@
 #include <map>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <variant>
 #include <vector>
 #include "common.h"
@@ -34,7 +33,7 @@ struct RyValueHasher {
 
 struct RyValue {
 	using List = std::shared_ptr<std::vector<RyValue>>;
-	using Map = std::shared_ptr<std::unordered_map<RyValue, RyValue, RyValueHasher>>;
+	using Map = std::shared_ptr<std::map<RyValue, RyValue>>;
 	using Func = std::shared_ptr<Frontend::RyFunction>;
 	using Instance = std::shared_ptr<Frontend::RyInstance>;
 	using Native = std::shared_ptr<Frontend::RyNative>;
@@ -42,14 +41,15 @@ struct RyValue {
 	using Class = std::shared_ptr<Frontend::RyClass>;
 	using BoundMethod = std::shared_ptr<Frontend::RyBoundMethod>;
 
-	using Variant = std::variant<std::monostate, Native, Func, Closure, double, bool, std::string, List, RyRange, Map,
-															 Instance, Class, BoundMethod>;
+	using Variant = std::variant<std::monostate, Native, Func, Closure, double, bool, char, std::string, List, RyRange,
+															 Map, Instance, Class, BoundMethod>;
 
 	Variant val;
 
 	RyValue() : val(std::monostate{}) {}
 	RyValue(double d) : val(d) {}
 	RyValue(bool b) : val(b) {}
+	RyValue(char c) : val(c) {}
 	RyValue(std::string s) : val(s) {}
 	RyValue(const char *s) : val(std::string(s)) {}
 	RyValue(List l) : val(l) {}
@@ -67,6 +67,7 @@ struct RyValue {
 	bool isNil() const { return std::holds_alternative<std::monostate>(val); }
 	bool isNumber() const { return std::holds_alternative<double>(val); }
 	bool isBool() const { return std::holds_alternative<bool>(val); }
+	bool isChar() const { return std::holds_alternative<char>(val); }
 	bool isString() const { return std::holds_alternative<std::string>(val); }
 	bool isList() const { return std::holds_alternative<List>(val); }
 	bool isMap() const { return std::holds_alternative<Map>(val); }
@@ -98,6 +99,13 @@ struct RyValue {
 		}
 		std::cerr << "Value is not a bool\n";
 		return false;
+	}
+	char asChar() const {
+		if (const char *c = std::get_if<char>(&val)) {
+			return *c;
+		}
+		std::cerr << "Value is not a char\n";
+		return '\0';
 	}
 	std::string asString() const {
 		if (const std::string *b = std::get_if<std::string>(&val)) {
@@ -169,6 +177,7 @@ struct RyValue {
 	bool operator!=(const RyValue &other) const { return val != other.val; }
 
 	std::string to_string() const;
+	std::string typeName() const;
 
 	RyValue operator+(const RyValue &other) const;
 	RyValue operator-(const RyValue &other) const;
@@ -178,7 +187,8 @@ struct RyValue {
 	RyValue operator-() const;
 	RyValue operator!() const;
 	RyValue operator>(const RyValue &other) const;
-	RyValue operator<(const RyValue &other) const;
+	bool operator<(const RyValue &other) const;
 	RyValue operator>=(const RyValue &other) const;
 };
 typedef RyValue (*NativeFn)(int argCount, RyValue *args, std::map<std::string, RyValue> &globals);
+typedef RyValue (*SimpleNativeFn)(int argCount, RyValue *args);

@@ -3,7 +3,7 @@
 #include "value.h"
 
 namespace RyRuntime {
-	inline RyValue ry_pop(int argCount, RyValue *args, std::map<std::string, RyValue> &globals) {
+	inline auto ry_pop(int argCount, RyValue *args, std::map<std::string, RyValue> &globals) -> RyValue {
 		// We look for the list receiver (usually at args[-1] if argCount is 0)
 		RyValue *listPtr = nullptr;
 		for (int i = 0; i >= -5; i--) {

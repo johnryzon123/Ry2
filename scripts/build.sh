@@ -46,6 +46,7 @@ cmake --build build -j1
 # Success Check 
 if [ $? -eq 0 ]; then
     cp build/ry bin
+    cp build/ry-lsp bin
     cp build/*.so lib
     echo -e "\n${GREEN}${BOLD}Build complete.${RESET}"
 else

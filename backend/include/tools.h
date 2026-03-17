@@ -7,6 +7,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 #include "colors.h"
 #include "token.h"
@@ -21,33 +22,40 @@ namespace RyTools {
 
 	inline void report(int line, int col, const std::string &where, const std::string &message,
 										 const std::string currentSourceCode, bool showCaret = true) {
-		std::cerr << RyColor::RED << RyColor::BOLD << "Error" << RyColor::RESET << where << ": " << message << std::endl;
 
+		std::cerr << RyColor::RED << RyColor::BOLD << "Error" << RyColor::RESET << where << ": " << message << std::endl;
 		// Extract the line from currentSourceCode
 		if (!currentSourceCode.empty()) {
 			std::stringstream ss(currentSourceCode);
 			std::string lineText;
-			for (int i = 0; i < line; ++i)
-				std::getline(ss, lineText);
+			bool found = false;
+			for (int i = 0; i < line; ++i) {
+				if (!std::getline(ss, lineText)) {
+					found = false;
+					break;
+				}
+				found = true;
+			}
 
-			if (showCaret) {
+			if (showCaret && found) {
 				// Print the caret
 				std::cerr << "  " << RyColor::CYAN << line << " | " << RyColor::RESET << lineText << std::endl;
 				std::cerr << RyColor::CYAN << "    | " << RyColor::RESET << std::string(col - 1, ' ') << RyColor::RED << "^~~"
 									<< RyColor::RESET << std::endl;
 			}
 		}
+
 		hadError = true;
 	}
-	inline std::string findModulePath(const std::string &name, bool isDirectory = false) {
-		std::vector<std::string> searchPaths = {".", "./modules", "./modules/library"};
+	inline auto findModulePath(const std::string &name, bool isDirectory = false) -> std::string {
+		std::vector<std::string> searchPaths = {"./", "./modules", "./modules/library"};
 
 #ifdef _WIN32
 		// Windows logic
-		searchPaths.push_back("C:/ry/modules");
+		searchPaths.emplace_back("C:/ry/modules");
 #else
 		// Unix (Linux/Mac) logic
-		searchPaths.push_back("/usr/lib/ry/");
+		searchPaths.emplace_back("/usr/lib/ry/");
 #endif
 
 		for (const auto &path: searchPaths) {
@@ -64,7 +72,7 @@ namespace RyTools {
 		return "";
 	}
 
-	inline int countIndentation(const std::string &line) {
+	inline auto countIndentation(const std::string &line) -> int {
 		int balance = 0;
 		bool inString = false;
 
@@ -97,8 +105,8 @@ namespace RyTools {
 		RyValue type;
 		bool isPanicking;
 
-		RyRuntimeError(Backend::Token token, std::string message, RyValue type = RyValue(), bool isPanicking=false) :
-				token(std::move(token)), message(std::move(message)), type(type), isPanicking(isPanicking) {}
+		RyRuntimeError(Backend::Token token, std::string message, RyValue type = RyValue(), bool isPanicking = false) :
+				token(std::move(token)), message(std::move(message)), type(std::move(type)), isPanicking(isPanicking) {}
 	};
 	struct ParseError : public std::runtime_error {
 		ParseError() : std::runtime_error("") {}

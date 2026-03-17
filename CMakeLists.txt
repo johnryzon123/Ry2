@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON) # Important for plugins
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-include_directories(middleend/include backend/include vm/include modules/native backend/include/platform misc/include)
+include_directories(middleend/include backend/include vm/include modules/native backend/include/platform misc/include lib-dk/)
 
 # Use GLOB_RECURSE (singular GLOB, plural RECURSE)
 file(GLOB_RECURSE BACKEND_SOURCES "backend/src/*.cpp")
@@ -42,11 +42,30 @@ set_target_properties(ry PROPERTIES OUTPUT_NAME "ry")
 # This allows the .so to find the 'Interpreter' class inside 'ry'
 set_target_properties(ry PROPERTIES ENABLE_EXPORTS ON)
 
+# Add the file module
 add_library(ry_file SHARED modules/lib_cpp/file.cpp)
 
-target_include_directories(ry_file PRIVATE backend/include vm/include misc/include)
+# Ensure the module can see your DK header
+target_include_directories(ry_file PRIVATE lib-dk/)
 
-if(APPLE)
-    set_target_properties(ry_string PROPERTIES LINK_FLAGS "-undefined dynamic_lookup")
-    set_target_properties(ry_file PROPERTIES LINK_FLAGS "-undefined dynamic_lookup")
+# --- LSP Section ---
+
+# Include the new LSP and JSON headers
+include_directories(lsp/json/include lsp/include)
+
+# Gather LSP sources
+file(GLOB_RECURSE JSON_SOURCES "lsp/json/src/*.cpp")
+file(GLOB_RECURSE LSP_MAIN_SOURCES "lsp/main.cpp")
+
+# Create the LSP executable
+add_executable(ry-lsp ${LSP_MAIN_SOURCES} ${JSON_SOURCES})
+
+# Link ry_core so the LSP can use the Ry Lexer/Parser later
+target_link_libraries(ry-lsp PRIVATE ry_core)
+
+# If you use dl (dynamic loading) in ry_core, ry-lsp needs it too
+if (UNIX)
+    target_link_libraries(ry-lsp PRIVATE dl)
 endif()
+
+set_target_properties(ry-lsp PROPERTIES OUTPUT_NAME "ry-lsp")

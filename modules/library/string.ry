@@ -4,6 +4,20 @@
 namespace String {
     
     # Returns a portion of the string starting at 'start' with 'length'
+    data _lower_to_upper_map = {
+        "a": "A", "b": "B", "c": "C", "d": "D", "e": "E", "f": "F", "g": "G", "h": "H",
+        "i": "I", "j": "J", "k": "K", "l": "L", "m": "M", "n": "N", "o": "O", "p": "P",
+        "q": "Q", "r": "R", "s": "S", "t": "T", "u": "U", "v": "V", "w": "W", "x": "X",
+        "y": "Y", "z": "Z"
+    }
+    data _upper_to_lower_map = {
+        "A": "a", "B": "b", "C": "c", "D": "d", "E": "e", "F": "f", "G": "g", "H": "h",
+        "I": "i", "J": "j", "K": "k", "L": "l", "M": "m", "N": "n", "O": "o", "P": "p",
+        "Q": "q", "R": "r", "S": "s", "T": "t", "U": "u", "V": "v", "W": "w", "X": "x",
+        "Y": "y", "Z": "z"
+    }
+
+
     func substr(data s, data start, data len) {
         if type(s) != "string" { panic "substr: Expected string" }
         
@@ -27,34 +41,11 @@ namespace String {
         data i = 0
         while i < s.len {
             data c = s[i]
-            # Manual mapping for ASCII transparency
-            if c == "a" { res = res + "A" }
-            else if c == "b" { res = res + "B" }
-            else if c == "c" { res = res + "C" }
-            else if c == "d" { res = res + "D" }
-            else if c == "e" { res = res + "E" }
-            else if c == "f" { res = res + "F" }
-            else if c == "g" { res = res + "G" }
-            else if c == "h" { res = res + "H" }
-            else if c == "i" { res = res + "I" }
-            else if c == "j" { res = res + "J" }
-            else if c == "k" { res = res + "K" }
-            else if c == "l" { res = res + "L" }
-            else if c == "m" { res = res + "M" }
-            else if c == "n" { res = res + "N" }
-            else if c == "o" { res = res + "O" }
-            else if c == "p" { res = res + "P" }
-            else if c == "q" { res = res + "Q" }
-            else if c == "r" { res = res + "R" }
-            else if c == "s" { res = res + "S" }
-            else if c == "t" { res = res + "T" }
-            else if c == "u" { res = res + "U" }
-            else if c == "v" { res = res + "V" }
-            else if c == "w" { res = res + "W" }
-            else if c == "x" { res = res + "X" }
-            else if c == "y" { res = res + "Y" }
-            else if c == "z" { res = res + "Z" }
-            else { res = res + c } # Keep symbols/numbers as is
+            attempt {
+                res = res + _lower_to_upper_map[c]
+            } fail err {
+                res = res + c
+            }
             i = i + 1
         }
         return res
@@ -66,35 +57,98 @@ namespace String {
         data i = 0
         while i < s.len {
             data c = s[i]
-            if c == "A" { res = res + "a" }
-            else if c == "B" { res = res + "b" }
-            else if c == "C" { res = res + "c" }
-            else if c == "D" { res = res + "d" }
-            else if c == "E" { res = res + "e" }
-            else if c == "F" { res = res + "f" }
-            else if c == "G" { res = res + "g" }
-            else if c == "H" { res = res + "h" }
-            else if c == "I" { res = res + "i" }
-            else if c == "J" { res = res + "j" }
-            else if c == "K" { res = res + "k" }
-            else if c == "L" { res = res + "l" }
-            else if c == "M" { res = res + "m" }
-            else if c == "N" { res = res + "n" }
-            else if c == "O" { res = res + "o" }
-            else if c == "P" { res = res + "p" }
-            else if c == "Q" { res = res + "q" }
-            else if c == "R" { res = res + "r" }
-            else if c == "S" { res = res + "s" }
-            else if c == "T" { res = res + "t" }
-            else if c == "U" { res = res + "u" }
-            else if c == "V" { res = res + "v" }
-            else if c == "W" { res = res + "w" }
-            else if c == "X" { res = res + "x" }
-            else if c == "Y" { res = res + "y" }
-            else if c == "Z" { res = res + "z" }
-            else { res = res + c }
+            attempt {
+                res = res + _upper_to_lower_map[c]
+            } fail err {
+                res = res + c
+            }
             i = i + 1
         }
         return res
+    }
+
+    # Replaces all occurrences of a substring with another
+    func replace(data s, data find, data repl) {
+        data res = ""
+        data i = 0
+        while i < s.len {
+            if i + find.len <= s.len and substr(s, i, find.len) == find {
+                res = res + repl
+                i = i + find.len
+            } else {
+                res = res + s[i]
+                i = i + 1
+            }
+        }
+        return res
+    }
+
+    # Splits a string by a delimiter into a list of strings
+    func split(data s, data delim) {
+        data result = []
+        if delim == "" {
+            data i = 0
+            while i < s.len {
+                result = result + [s[i]]
+                i = i + 1
+            }
+            return result
+        }
+
+        data current = ""
+        data i = 0
+        while i < s.len {
+            if i + delim.len <= s.len and substr(s, i, delim.len) == delim {
+                result = result + [current]
+                current = ""
+                i = i + delim.len
+            } else {
+                current = current + s[i]
+                i = i + 1
+            }
+        }
+        result = result + [current]
+        return result
+    }
+
+    # Joins a list of strings with a delimiter
+    func join(data list, data delim) {
+        if list.len == 0 { return "" }
+        
+        data res = list[0]
+        data i = 1
+        while i < list.len {
+            res = res + delim + list[i]
+            i = i + 1
+        }
+        return res
+    }
+
+    # Removes leading and trailing whitespace (spaces only)
+    func trim(data s) {
+        data start = 0
+        while start < s.len and s[start] == " " {
+            start = start + 1
+        }
+
+        data end = s.len
+        while end > start and s[end - 1] == " " {
+            end = end - 1
+        }
+
+        return substr(s, start, end - start)
+    }
+
+    # Checks if a string starts with a given prefix
+    func startsWith(data s, data prefix) {
+        if prefix.len > s.len { return false }
+        return substr(s, 0, prefix.len) == prefix
+    }
+
+    # Checks if a string ends with a given suffix
+    func endsWith(data s, data suffix) {
+        if suffix.len > s.len { return false }
+        data start = s.len - suffix.len
+        return substr(s, start, suffix.len) == suffix
     }
 }

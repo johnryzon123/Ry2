@@ -1,8 +1,207 @@
 # types.ry - A Ry Standard Library
-# "Ry's for You" - Feel free to modify these algorithms!
+# "Ry's for You" - Feel free to modify these algorithms !
 
-alias data::num as num
-alias data::bool as bool
-alias data::list as list
-alias data::map as map
-alias data::str as str
+# Reads a string then returns false if is not a number and true if is a number
+func is_num(data s) {
+  data t = type(s)
+  if t == "number" { return true }
+  if t != "string" or s == "" { return false }
+
+  data i = 0
+  if s[0] == "-" or s[0] == "+" { i = 1 }
+  if i == s.len { return false } # Just a sign is not a number
+
+  while i < s.len {
+      data c = s[i]
+      if c < "0" or c > "9" { return false }
+      i = i + 1
+  }
+  return true
+}
+
+func is_alpha(data s) {
+  if type(s) != "string" or s == "" { return false }
+    
+  foreach data i in 0 to s.len {
+      data c = s[i]
+      if !(c >= "a" and c <= "z") and !(c >= "A" and c <= "Z") {
+          return false
+      }
+  }
+  return true
+}
+
+func is_alnum(data s) {
+  if type(s) != "string" and type(s) != "number" {
+    return false
+  } else if type(s) == "number" {
+    return true
+  }
+  if s == "" {
+    return false
+  }
+  data i = 0
+  data sign = 1.0
+  if s[0] == "-" {
+    sign = -1.0
+    i = 1
+  } else if s[0] == "+" {
+    i = 1
+  }
+
+  data res = 0.0
+  data in_fraction = false
+  data fraction_divisor = 1.0
+
+  while i < s.len {
+    data c = s[i]
+    
+    data d = -1
+    if is_num(c) or is_alpha(c) { return true}
+    else {
+      return false
+    }
+    i = i + 1
+  }
+}
+
+# Converts a string to a number, with support for negative numbers and decimals.
+func num(data s) {
+  if type(s) != "string" {
+    panic "Can only convert strings to numbers."
+  }
+  if s == "" {
+    return 0
+  }
+
+  data i = 0
+  data sign = 1.0
+  if s[0] == "-" {
+    sign = -1.0
+    i = 1
+  } else if s[0] == "+" {
+    i = 1
+  }
+
+  data res = 0.0
+  data in_fraction = false
+  # This is used to calculate the divisor for fractional parts.
+  data fraction_divisor = 1.0
+
+  while i < s.len {
+    data c = s[i]
+    if c == "." {
+      if in_fraction {
+        panic "Invalid number format: multiple decimal points found."
+      }
+      in_fraction = true
+    } else {
+      data d = -1 # Use -1 to signal a non-digit character
+      if c == "0" or c == "zero" { d = 0 }
+      else if c == "1" or c == "one" { d = 1 }
+      else if c == "2" or c == "two" { d = 2 }
+      else if c == "3" or c == "three" { d = 3 }
+      else if c == "4" or c == "four" { d = 4 }
+      else if c == "5" or c == "five" { d = 5 }
+      else if c == "6" or c == "six" { d = 6 }
+      else if c == "7" or c == "seven" { d = 7 }
+      else if c == "8" or c == "eight" { d = 8 }
+      else if c == "9" or c == "nine" { d = 9 }
+
+      if d == -1 {
+        panic "Invalid character '" + c + "' in number string."
+      }
+
+      if in_fraction {
+        fraction_divisor = fraction_divisor * 10.0
+        res = res + (d / fraction_divisor)
+      } else {
+        res = res * 10.0 + d
+      }
+    }
+    i = i + 1
+  }
+  return res * sign
+}
+
+# Returns a string representation of a value.
+# This is a recursive function that can handle nested lists.
+func str(data val) {
+  data t = type(val)
+
+  if t == "nil" {
+    return "null"
+  }
+  if t == "number" {
+    return "" + val # The VM handles number-to-string conversion
+  }
+  if t == "boolean" {
+    if val { return "true" } else { return "false" }
+  }
+  if t == "char" {
+    return "" + val
+  }
+  if t == "string" {
+    return val
+  }
+  if t == "list" {
+    data result = "["
+    data first = true
+    foreach data item in val {
+      if !first {
+        result = result + ", "
+      }
+      # Recursively call str() for each item in the list.
+      result = result + str(item)
+      first = false
+    }
+    return result + "]"
+  }
+
+  # For types that cannot be easily represented, return a placeholder.
+  # As Ry evolves, more types will be supported here.
+  if t == "map" { return "<map>" }
+  if t == "function" or t == "native" or t == "closure" { return "<function>" }
+  if t == "class" { return "<class>" }
+  if t == "instance" { return "<instance>" }
+  if t == "boundmethod" { return "<boundmethod>" }
+
+  return "<unknown type>"
+}
+
+# Converts a value to its boolean equivalent based on Ry's truthiness rules.
+func bool(data val) {
+  data t = type(val)
+  if t == "nil" {
+    return false
+  }
+  if t == "boolean" {
+    return val
+  }
+  if t == "number" {
+    return val != 0
+  }
+  if t == "string" {
+    # An empty string is considered false.
+    return val != ""
+  }
+  # All other types (lists, maps, functions, etc.) are considered true if they exist.
+  return true
+}
+
+# Converts a value to a character.
+func char(data val) {
+  data t = type(val)
+  if t == "char" {
+    return val
+  }
+  if t == "string" {
+    if val == "" { panic "Cannot convert an empty string to a char." }
+    return val[0] # String indexing now returns a char
+  }
+  if t == "number" {
+    # This would ideally be a native function for direct conversion.
+    panic "Conversion from number to char is not yet supported."
+  }
+  panic "Cannot convert type '" + t + "' to char."
+}

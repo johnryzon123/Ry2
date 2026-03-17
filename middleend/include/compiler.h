@@ -15,7 +15,7 @@ namespace Frontend {
 
 namespace RyRuntime {
 	struct Local {
-		Backend::Token name;
+		Backend::Token name; // The name of the local
 		int depth;
 		bool isCaptured = false;
 
@@ -93,22 +93,23 @@ namespace RyRuntime {
 		void visitFunctionStmt(Backend::FunctionStmt &stmt);
 		void visitVarStmt(Backend::VarStmt &stmt);
 
-		// Helper to write opcodes to the chunk
-		void emitByte(uint8_t byte);
-		void emitBytes(uint8_t byte1, uint8_t byte2);
-		void emitConstant(RyValue value);
+		// Instruction helpers
+		void emitInstruction(Instruction instr);
 		int makeConstant(RyValue value);
 
 		// Jump helpers
-		int emitJump(uint8_t instruction);
+		int emitJump(OpCode op);
 		void patchJump(int offset);
 		void emitLoop(int loopStart);
 
 		Chunk *compilingChunk;
 		std::shared_ptr<Frontend::ClassCompiler> currentClass = nullptr;
 		void compileStatement(std::shared_ptr<Backend::Stmt> stmt);
-		void compileExpression(std::shared_ptr<Backend::Expr> expr);
-		void compileMethod(std::shared_ptr<Backend::FunctionStmt> stmt);
+		// compileExpression now returns the register where the result is stored.
+		// A value of -1 indicates the expression does not produce a value that needs a register.
+		int compileExpression(std::shared_ptr<Backend::Expr> expr);
+		void compileExpression(std::shared_ptr<Backend::Expr> expr, int destReg); // Compile into a specific register
+		void compileMethod(std::shared_ptr<Backend::FunctionStmt> stmt, const std::string &ownerClassName);
 
 
 		// Scope & Locals
@@ -120,6 +121,14 @@ namespace RyRuntime {
 		int resolveLocal(Backend::Token &name);
 		int resolveUpvalue(Backend::Token &name);
 		void addLocal(Backend::Token name);
+
+		// Register allocation
+		int targetReg = 0;
+		int nextReg = 0;
+		std::vector<int> freeList;
+		std::vector<int> allocationStack;
+		int allocReg();
+		void freeRegs(int count);
 		int addUpvalue(uint8_t index, bool isLocal);
 		std::unordered_set<std::string> nativeNames;
 		std::vector<Upvalue> upvalues;

@@ -1,6 +1,21 @@
 # --- Ry Language Ignore List ---
+
+# binaries and objects
+*.o
+*.so
+*.dll
+ry
+
+# Build
+bin/
+lib/
 build/
+compile_commands.json
+
+# Local editor configs
 .vscode/
+.idea/
+
+# Caches
 .cache/
 .clangd/
-compile_commands.json

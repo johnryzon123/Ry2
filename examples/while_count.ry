@@ -3,6 +3,6 @@ data i = 0
 data running = true
 while (i < 5 and running) {
   out(i)
-  if (i == 4) running = false
+  if i == 4 { running = false }
   i = i + 1
 }

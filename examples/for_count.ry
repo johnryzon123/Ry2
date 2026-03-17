@@ -1,6 +1,4 @@
-# For loop example prints 0...10
 data colors = ["Red", "Green", "Blue"]
-for data i = 0, i < len(colors), i = i + 1 {
-    colors = colors + "Purple"
-    out(colors[i])
+foreach data color in colors {
+    out(color)
 }

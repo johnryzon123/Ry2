@@ -1,0 +1,188 @@
+import("string.ry")
+import("types.ry")
+
+namespace JSON {
+    class Parser {
+        data src = ""
+        data pos = 0
+
+        func init(data json_str) {
+            this.src = json_str
+            this.pos = 0
+        }
+
+        func advance() {
+            this.pos = this.pos + 1
+            return this.src[this.pos - 1]
+        }
+
+        func peek() {
+            if this.pos >= this.src.len { return "\0" }
+            return this.src[this.pos]
+        }
+
+        func consume(data expected) {
+            if this.peek() != expected {
+                panic "Expected '" + expected + "' but found '" + this.peek() + "' at position " + this.pos
+            }
+            this.pos = this.pos + 1
+        }
+
+        func skip_whitespace() {
+            while this.pos < this.src.len {
+                data c = this.peek()
+                if c == " " or c == "\n" or c == "\t" or c == "\r" {
+                    this.pos = this.pos + 1
+                } else {
+                    stop
+                }
+            }
+        }
+
+        func parse_string() {
+            this.consume("\"")
+            data s = ""
+            while this.peek() != "\"" {
+                if this.peek() == "\0" {
+                    panic "Unterminated string."
+                }
+                data c = this.advance()
+                if c == "\\" {
+                    data escaped = this.advance()
+                    if escaped == "\"" { s = s + "\"" }
+                    else if escaped == "\\" { s = s + "\\" }
+                    else if escaped == "/" { s = s + "/" }
+                    else if escaped == "b" { s = s + "\b" }
+                    else if escaped == "f" { s = s + "\f" }
+                    else if escaped == "n" { s = s + "\n" }
+                    else if escaped == "r" { s = s + "\r" }
+                    else if escaped == "t" { s = s + "\t" }
+                    else if escaped == "u" {
+                        panic("Unicode escapes (\\uXXXX) are not supported in this parser.")
+                    } else {
+                        panic("Invalid escape sequence '\\" + escaped + "'.")
+                    }
+                } else {
+                    s = s + c
+                }
+            }
+            this.consume("\"")
+            return s
+        }
+
+        func parse_number() {
+            data start_pos = this.pos
+
+            if this.peek() == "-" { this.advance() }
+
+            while this.peek() >= "0" and this.peek() <= "9" { this.advance() }
+
+            if this.peek() == "." {
+                this.advance()
+                while this.peek() >= "0" and this.peek() <= "9" { this.advance() }
+            }
+
+            if this.peek() == "e" or this.peek() == "E" {
+                this.advance()
+                if this.peek() == "+" or this.peek() == "-" { this.advance() }
+                while this.peek() >= "0" and this.peek() <= "9" { this.advance() }
+            }
+
+            data num_str = String.substr(this.src, start_pos, this.pos - start_pos)
+
+            numstr = num(num_str)
+        }
+
+        func parse_literal() {
+            if String.startsWith(String.substr(this.src, this.pos, 4), "true") {
+                this.pos = this.pos + 4
+                return true
+            }
+            if String.startsWith(String.substr(this.src, this.pos, 5), "false") {
+                this.pos = this.pos + 5
+                return false
+            }
+            if String.startsWith(String.substr(this.src, this.pos, 4), "null") {
+                this.pos = this.pos + 4
+                return null
+            }
+            panic("JSON Parse Error: Invalid literal starting at position " + this.pos)
+        }
+
+        func parse_value() {
+            this.skip_whitespace()
+            data c = this.peek()
+
+            if c == "{" { return this.parse_object() }
+            if c == "[" { return this.parse_array() }
+            if c == "\"" { return this.parse_string() }
+            if c == "t" or c == "f" or c == "n" { return this.parse_literal() }
+
+            if (c >= "0" and c <= "9") or c == "-" {
+                return this.parse_number()
+            }
+            panic("JSON Parse Error: Unexpected character '" + c + "' at position " + this.pos)
+        }
+
+        func parse_object() {
+            this.consume("{")
+            data obj = {}
+            this.skip_whitespace()
+
+            if this.peek() == "}" {
+                this.consume("}")
+                return obj
+            }
+
+            while true {
+                this.skip_whitespace()
+                data key = this.parse_string()
+                this.skip_whitespace()
+                this.consume(":")
+                data val = this.parse_value()
+                obj[key] = val
+
+                this.skip_whitespace()
+                if this.peek() == "," {
+                    this.consume(",")
+                } else {
+                    break
+                }
+            }
+            this.consume("}")
+            return obj
+        }
+
+        func parse_array() {
+            this.consume("[")
+            data arr = []
+            this.skip_whitespace()
+
+            if this.peek() == "]" {
+                this.consume("]")
+                return arr
+            }
+
+            while true {
+                arr = arr + [this.parse_value()]
+                this.skip_whitespace()
+                if this.peek() == "," {
+                    this.consume(",")
+                } else {
+                    break
+                }
+            }
+            this.consume("]")
+            return arr
+        }
+    }
+
+    func parse(data json_str) {
+        data p = Parser(json_str)
+        return p.parse_value()
+    }
+
+    func stringify(data val) {
+            return str(val)
+        }
+    }

@@ -79,12 +79,13 @@ namespace Backend {
 		std::optional<Token> returnTypeNamespace;
 		std::optional<Token> returnTypeAlias;
 		bool isPrivate = false; // member for Classes
+		bool isAbstract = false;
 
 
 		FunctionStmt(Token n, std::vector<Parameter> p, std::vector<std::shared_ptr<Stmt>> b, std::optional<Token> rTypeNs,
-								 std::optional<Token> rTypeAlias) :
+								 std::optional<Token> rTypeAlias, bool isAbstract = false) :
 				name(std::move(n)), parameters(std::move(p)), body(std::move(b)), returnTypeNamespace(std::move(rTypeNs)),
-				returnTypeAlias(std::move(rTypeAlias)) {}
+				returnTypeAlias(std::move(rTypeAlias)), isAbstract(isAbstract) {}
 		void accept(StmtVisitor &visitor) override { visitor.visitFunctionStmt(*this); }
 	};
 
@@ -205,11 +206,12 @@ namespace Backend {
 		std::vector<std::shared_ptr<VarStmt>> fields;
 		std::shared_ptr<VariableExpr> superclass = nullptr;
 		bool isPrivate = false;
+		bool isAbstract = false;
 
 		ClassStmt(Token name, std::vector<std::shared_ptr<FunctionStmt>> methods,
-							std::vector<std::shared_ptr<VarStmt>> fields, bool isPrivate,
+							std::vector<std::shared_ptr<VarStmt>> fields, bool isPrivate, bool isAbstract,
 							std::shared_ptr<VariableExpr> superclass = nullptr) :
-				name(name), methods(std::move(methods)), fields(std::move(fields)), isPrivate(isPrivate),
+				name(name), methods(std::move(methods)), fields(std::move(fields)), isPrivate(isPrivate), isAbstract(isAbstract),
 				superclass(std::move(superclass)) {}
 		void accept(StmtVisitor &visitor) override { visitor.visitClassStmt(*this); }
 	};

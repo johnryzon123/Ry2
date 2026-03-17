@@ -18,6 +18,9 @@ namespace Backend {
 		~Parser() = default;
 		std::set<std::string> &externalTypeAliases;
 		std::vector<std::shared_ptr<Stmt>> parse();
+		static auto getNamespaces() -> std::set<std::string> {
+			return namespaces;
+		}
 
 	private:
 		int loopDepth = 0;
