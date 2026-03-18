@@ -1,4 +1,5 @@
 # Ry (Ry's for You) - Text based Snake
+import("string.ry")
 data width = 10
 data height = 10
 data snake = [[5,5], [5,4]]
@@ -14,14 +15,14 @@ data is_snake = true
 data score = snake.len - 2
 
 while running {
-    # clear()
+    Sys.clear()
     score = snake.len - 2
     out("--- Ry Snake | Score: " + score + " ---")
 
     # Render Grid
-    foreach data y in 0 to height {
+    foreach data y in 0 to height - 1 {
         data row = ""
-        foreach data x in 0 to width {
+        foreach data x in 0 to width - 1 {
             is_snake = false
             foreach data seg in snake {
                 if seg[0] == x and seg[1] == y { is_snake = true }
@@ -35,7 +36,7 @@ while running {
     }
 
     # Input
-    data move = input("Move (wasd): ")
+    data move = String.trim(input("Move (wasd): "))
     if move == "exit" { running = false } 
 
     # Calculate Physics
@@ -64,7 +65,7 @@ while running {
         out("GAME OVER! You ran into yourself!")
         running = false
     } else if hit_wall {
-        out("GAME OVER! You ran into a wall!")
+        out("GAME OVER! You ran into a wall at " + next)
         running = false
     } else {
         # Update Movement
@@ -75,7 +76,7 @@ while running {
             food_idx = (food_idx + 1) % food_spots.len
             food = food_spots[food_idx]
         } else {
-            snake.pop()
+            List.pop(snake)
         }
     }
 }

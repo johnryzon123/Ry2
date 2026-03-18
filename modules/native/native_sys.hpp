@@ -1,6 +1,10 @@
+#pragma once
+#include <string>
+#include <vector>
 #include "value.h"
 
 namespace RyRuntime {
+	inline std::vector<std::string> sys_args;
 	inline auto ry_exit(int argCount, RyValue *args, std::map<std::string, RyValue> &globals) -> RyValue {
 		int exitCode = args->asNumber();
 		exit(0);
@@ -17,12 +21,20 @@ namespace RyRuntime {
 #ifdef _WIN32
 		// Windows specific clear
 		auto _ system("cls");
-		return (double)_;
+		return (double) _;
 #else
 		// Linux/macOS standard clear
 		auto _ = system("clear");
-		return (double)_;
+		return (double) _;
 #endif
 		return nullptr;
 	};
+
+	inline auto ry_args(int argCount, RyValue *args, std::map<std::string, RyValue> &globals) -> RyValue {
+		auto list = std::make_shared<std::vector<RyValue>>();
+		for (const auto &arg: sys_args) {
+			list->push_back(RyValue(arg));
+		}
+		return RyValue(list);
+	}
 } // namespace RyRuntime

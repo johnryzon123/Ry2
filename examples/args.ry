@@ -1,0 +1,8 @@
+# test.ry
+data arguments = Sys.args()
+data len = arguments.len
+out("Total arguments: ${len}")
+
+foreach data arg in arguments {
+    out("Processing argument: ${arg}")
+}

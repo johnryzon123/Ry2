@@ -127,12 +127,12 @@ namespace String {
     # Removes leading and trailing whitespace (spaces only)
     func trim(data s) {
         data start = 0
-        while start < s.len and s[start] == " " {
+        while start < s.len and (s[start] == " " or s[start] == "\n" or s[start] == "\r" or s[start] == "\t") {
             start = start + 1
         }
 
         data end = s.len
-        while end > start and s[end - 1] == " " {
+        while end > start and (s[end - 1] == " " or s[end - 1] == "\n" or s[end - 1] == "\r" or s[end - 1] == "\t") {
             end = end - 1
         }
 

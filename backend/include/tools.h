@@ -38,10 +38,21 @@ namespace RyTools {
 			}
 
 			if (showCaret && found) {
-				// Print the caret
-				std::cerr << "  " << RyColor::CYAN << line << " | " << RyColor::RESET << lineText << std::endl;
-				std::cerr << RyColor::CYAN << "    | " << RyColor::RESET << std::string(col - 1, ' ') << RyColor::RED << "^~~"
-									<< RyColor::RESET << std::endl;
+				int padding = std::to_string(line).length();
+				int maxWidth = 60;
+
+				std::string displayLine = lineText;
+				int displayCol = col;
+
+				if (lineText.length() > maxWidth) {
+					int start = std::max(0, col - (maxWidth / 2));
+					displayLine = "..." + lineText.substr(start, maxWidth) + "...";
+					displayCol = (col - start) + 3;
+				}
+
+				std::cerr << RyColor::CYAN << " " << line << " | " << RyColor::RESET << displayLine << std::endl;
+				std::cerr << RyColor::CYAN << std::string(padding + 1, ' ') << " | " << RyColor::RESET
+									<< std::string(displayCol - 1, ' ') << RyColor::RED << "^~~" << RyColor::RESET << std::endl;
 			}
 		}
 

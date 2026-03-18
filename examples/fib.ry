@@ -10,9 +10,9 @@ func fib_speed_test(data n) {
     return a
 }
 
-data start = clock()
+data start = Sys.clock()
 data result = fib_speed_test(1000000) 
-data end = clock()
+data end = Sys.clock()
 
 out("Fibonacci (1M iterations) Result: " + result)
 out("Time Taken: " + (end - start) + " seconds")

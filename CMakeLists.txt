@@ -69,3 +69,14 @@ if (UNIX)
 endif()
 
 set_target_properties(ry-lsp PROPERTIES OUTPUT_NAME "ry-lsp")
+# Automatically strip the binary in Release mode
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_custom_command(TARGET ry POST_BUILD
+        COMMAND ${CMAKE_STRIP} ry
+        COMMENT "Stripping symbols from ry binary..."
+    )
+    add_custom_command(TARGET ry-lsp POST_BUILD
+        COMMAND ${CMAKE_STRIP} ry-lsp
+        COMMENT "Stripping symbols from ry-lsp binary..."
+    )
+endif()

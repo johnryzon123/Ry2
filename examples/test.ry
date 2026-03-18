@@ -1,5 +1,0 @@
-data nest = [[10, 20], [30, 40]]
-data inner = nest[0]
-out(inner)
-out(inner[0])
-out(inner[1])

@@ -1,6 +1,4 @@
-#ifndef RY_NATIVE_IO_HPP
-#define RY_NATIVE_IO_HPP
-
+#pragma once
 #include <ctime>
 #include <iostream>
 #include <string>
@@ -62,5 +60,3 @@ namespace RyRuntime {
 		return RyValue(line);
 	}
 } // namespace RyRuntime
-
-#endif

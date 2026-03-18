@@ -7,6 +7,7 @@
 #include "compiler.h"
 #include "func.h"
 #include "lexer.h"
+#include "native_sys.hpp"
 #include "parser.h"
 #include "tools.h"
 #include "vm.h"
@@ -29,7 +30,7 @@ void interpret(VM &vm, const std::string &source) {
 	std::vector<Backend::Token> tokens = lexer.scanTokens();
 
 	// Check for unknown tokens from the lexer
-	for (const auto &token : tokens) {
+	for (const auto &token: tokens) {
 		if (token.type == Backend::TokenType::UNKNOWN) {
 			RyTools::report(token.line, token.column, "", "Unexpected character '" + token.lexeme + "'", source);
 		}
@@ -120,6 +121,11 @@ void runREPL(VM &vm) {
 auto main(int argc, char *argv[]) -> int {
 	VM vm;
 
+	// Start at 3 to skip: [0]ry, [1]run, [2]test.ry
+	for (int i = 3; i < argc; ++i) {
+		RyRuntime::sys_args.emplace_back(argv[i]);
+	}
+
 	if (argc >= 2) {
 		std::string command = argv[1];
 
@@ -136,8 +142,8 @@ auto main(int argc, char *argv[]) -> int {
 		} else {
 			std::ifstream inputFile(argv[2]);
 			if (!inputFile.is_open()) {
-				std::cerr << "Type run to run a file.\n" <<
-										 "Type -v or --version to see the version.\n";
+				std::cerr << "Type run to run a file.\n"
+									<< "Type -v or --version to see the version.\n";
 				return 1;
 			}
 			std::string src((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());

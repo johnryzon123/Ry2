@@ -1,3 +1,4 @@
+#!Not working
 import("math.ry")
 import("types.ry")
 
@@ -127,7 +128,7 @@ data line = ""
 
 out("Calculator - Ry version")
 while isRunning {
-    line = input(">> ")
+    line = "" + input(">> ") + ""
     if line == "quit" { 
         isRunning = false 
     } else if line == "" {

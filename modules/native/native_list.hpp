@@ -1,5 +1,5 @@
+#pragma once
 #include <stdexcept>
-#include "env.h" // IWYU pragma: keep
 #include "value.h"
 
 namespace RyRuntime {
