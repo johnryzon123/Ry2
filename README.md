@@ -2,6 +2,8 @@
 
 <p align="center">
   <img src="assets/logo.svg" width="300" alt="Ry Language Logo">
+</p>
+<p align="center">
   <img src="assets/screenshot.jpg" width="400" alt="Ry Screenshot">
 </p>
 
