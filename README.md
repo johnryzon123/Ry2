@@ -4,7 +4,7 @@
   <img src="assets/logo.svg" width="300" alt="Ry Language Logo">
 </p>
 <p align="center">
-  <img src="assets/screenshot.jpg" width="400" alt="Ry Screenshot">
+  <img src="assets/screenshot.jpg" width="500" alt="Ry Screenshot">
 </p>
 
 Ry is a lightweight, robust, and english-like language designed with a focus on stability and developer experience. Whether you're building simple scripts or exploring language design, Ry is built to be helpful, colorful, and fast.
