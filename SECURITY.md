@@ -7,8 +7,8 @@ Currently I only provide security updates for the latest version of Ry2.
 
 | Version | Supported          |
 | ------- | ------------------ |
-| > 2.1.x   | ✅ Yes             |
-| < 2.1   | ❌ No              |
+| > 2.1.x   | / Yes             |
+| < 2.1   | X No              |
 
 ## Reporting a Vulnerability
 
