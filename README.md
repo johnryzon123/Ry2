@@ -1,6 +1,8 @@
 # Ry (Ry's for You) v2.1
+
 <p align="center">
   <img src="assets/logo.svg" width="300" alt="Ry Language Logo">
+  <img src="assets/screenshot.jpg" width="400" alt="Ry Screenshot">
 </p>
 
 Ry is a lightweight, robust, and english-like language designed with a focus on stability and developer experience. Whether you're building simple scripts or exploring language design, Ry is built to be helpful, colorful, and fast.
@@ -62,6 +64,7 @@ $ ry run script.ry
 ```
 
 ## Error reporting example
+
 ```bash
 ry> _3()
 Traceback (most recent calls)
@@ -77,10 +80,12 @@ Error: NameError: Undefined variable 'dwad'.
 ```
 
 ## Documentation
-* [Introduction](docs/01_Introduction.md)
-* [Basics](docs/02_basics.md)
-* [Classes](docs/03_Classes.md)
-* [FFI](docs/04_FFI.md)
+
+- [Introduction](docs/01_Introduction.md)
+- [Basics](docs/02_basics.md)
+- [Classes](docs/03_Classes.md)
+- [FFI](docs/04_FFI.md)
 
 ## License
+
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
