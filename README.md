@@ -24,6 +24,12 @@ Ry is built to be efficient. With an optimized custom c++ core that uses custom 
 
 Ry comes with a built-in installer for Linux and Windows systems.
 
+**Note**: To install the Ry language you need the following tools:
+  - **GCC**: A compatible g++ compiler(should be above c++20)
+  - **CMAKE**: The CMAKE build system generator for generating make or any build system files
+  - **BUILD SYSTEM**: A build system like make (I prefer using `ninja` since it's fast and it's the default I use)
+
+### Installation Steps
 1. **Clone the repository:**
    ```bash
    $ git clone https://github.com/johnryzon123/Ry2.git
