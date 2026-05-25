@@ -7,18 +7,17 @@
   <img src="assets/screenshot.jpg" width="500" alt="Ry Screenshot">
 </p>
 
-Ry is a lightweight, robust, and english-like language designed with a focus on stability and developer experience. Whether you're building simple scripts or exploring language design, Ry is built to be helpful, colorful, and fast.
-
+Ry is a stupid vibe coded over engineered register based and direct threaded vm in c++ which offers you a lazy gc
 ## Key Features
 
 - **Intelligent Error Reporting**: Beautiful, color-coded error messages with caret pointers (`^~~`) and tracebacks to show you exactly where things went wrong.
 - **Smart REPL**: A dynamic interactive shell with auto-indentation tracking and colorized prompts.
-- **Built for Stability**: A memory-conscious C++ core that respects your hardware limits.
-- **Improved version of Ry**: An optimized core interpreter using bytecode and registers with direct threading support.
+- **Not even built for Stability**: A nonmemory-conscious C++ core that doesn't respect your hardware limits.
+- **Overengineered version of Ry1**: An optimized core interpreter using bytecode and registers with direct threading support.
 
 ## Performance
 
-Ry is built to be efficient. With an optimized custom c++ core that uses custom bytecode without external tools like flex, bison, antlr or llvm.
+Ry is not built to be efficient. With an unoptimized custom c++ core that uses custom bytecode without external tools like flex, bison, antlr or llvm.
 
 ## Installation
 
